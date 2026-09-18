@@ -88,13 +88,16 @@ the workflow filename `release.yml`. The workflow then publishes with a short-li
 A trusted publisher can only be attached to a package that already exists, so the very first release
 has to go out with a token or a local `npm publish`.
 
-**Granular token (bridge for the first release, or if you prefer a secret).** npmjs.com -> *Access
-Tokens -> Generate New Token -> Granular*: *All packages*, *Read and write*, and tick **Bypass
-two-factor authentication**. Then:
+**The first release has to be local.** A trusted publisher can only be attached to a package that
+already exists, and this account authenticates with **security keys** (no authenticator app, so no
+six-digit code exists). A security key needs a browser prompt, which only an interactive terminal can
+show:
 
 ```bash
-gh secret set NPM_TOKEN -R sashimikun/sql-jev     # paste the token; it never touches a shell history
+npm publish --access public      # npm opens a browser; touch the key
 ```
 
-The workflow uses the token when `NPM_TOKEN` exists and falls back to OIDC when it does not, so you can
-drop the secret the moment trusted publishing is configured. Tokens expire; OIDC does not.
+**After that, nothing is needed but the trusted publisher above.** Do not reach for a bypass-2FA token
+as a bridge: npm is retiring those for direct publishing (account changes Aug 2026, direct publishing
+Jan 2027), so it would work briefly and then fail. The workflow still supports an `NPM_TOKEN` secret if
+one ever exists, but on this account OIDC is the only durable path.
