@@ -4,6 +4,25 @@ Reproduce: `bun run bench/bench.ts` (mock model, in-memory SQLite, no credential
 `bun run bench/bench.ts --live --rows 200` (real API, ~$0.001). Numbers are medians of three runs
 after one warm-up. Mock mode measures engine overhead only: no network, no disk, no model latency.
 
+## Real Cloudflare D1 — tag() replay, 300 rows
+
+Not a mock and not a fake binding: a real database, the engine's own statements captured locally and
+replayed through `wrangler d1 execute --remote`, then read back.
+
+| what | measured |
+| --- | --- |
+| rows | 300 synthetic people |
+| model requests to judge them | 8 (mock model) |
+| write statements for the tag column | **10 UPDATEs**, 33 rows each (D1's 100-parameter limit) |
+| judgment statements | 300, packed into 2 `exec()` scripts, largest statement 918 B |
+| `WHERE jev_is_german = 1` on D1 | 60 — identical to the local run |
+| rows left NULL by the tag write | 0 (`ELSE <column>` held) |
+| query plan on D1 | `SEARCH people USING COVERING INDEX people_jev_is_german_idx` |
+| projection for 5,000 rows | ~152 UPDATEs + 5 read pages + a few scripts, inside D1's 1000-query budget |
+
+Reproduce: build the local capture with a D1-shaped adapter, then apply `sql/sql-jev.sql`, the seed, the
+judgments and the tag statements with `wrangler d1 execute <db> --remote --file=...`.
+
 ## Mock model — 2026-09-18
 
 | rows | cold (ms) | warm (ms) | indexed tag (ms) | rewriter scan (ms) | matches | API calls cold | API calls warm | writes | exec() calls | largest statement | input tokens | cost |
