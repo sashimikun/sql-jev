@@ -6,3 +6,4 @@ dist/
 *.local.db-*
 test/tmp/
 .DS_Store
+*.tgz

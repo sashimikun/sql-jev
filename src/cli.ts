@@ -13,9 +13,9 @@
  * The API key comes from TYPESAFE_API_KEY, or from jev_settings.api_key in the database.
  */
 
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { createJev, JEV_VERSION } from './index.js';
 import { SCHEMA_SQL } from './schema.js';
 import {
@@ -62,7 +62,10 @@ function isEntryPoint(): boolean {
   const entry = process.argv[1];
   if (!entry) return false;
   try {
-    return import.meta.url === pathToFileURL(entry).href;
+    // Compare resolved paths: npm and npx run the bin through a symlink in node_modules/.bin, so
+    // argv[1] is not the module URL unless both sides are resolved first. Without this the published
+    // CLI exits silently with status 0.
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
   } catch {
     return false;
   }
