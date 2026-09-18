@@ -132,10 +132,13 @@ await jev.warm('people', 'the name is European');          // judge a whole tabl
 ## Develop
 
 ```bash
-bun install && bun test     # 155 tests, mock model, no credentials
+bun install && bun test     # 191 tests, mock model, no credentials
 bun run typecheck:all
 bun run bench/bench.ts      # numbers, no credentials; bench/RESULTS.md
 ```
+
+The landing page lives in `site/` (one self-contained HTML file plus two self-hosted fonts) and is live
+at https://sqljev.sharenow.today.
 
 ## License
 

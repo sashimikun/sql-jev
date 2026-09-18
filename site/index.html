@@ -1,0 +1,663 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>sql-jev — ask your SQLite tables questions in plain English</title>
+<meta name="description" content="WHERE jev(people, 'the name is European') for SQLite, Turso/libSQL and Cloudflare D1. Judge once, store the answers in a table, index the result — a re-run costs zero API calls.">
+<meta name="theme-color" content="#f5f3f2">
+<meta property="og:title" content="sql-jev — plain-English SQL for SQLite, Turso and D1">
+<meta property="og:description" content="Ask your tables questions in plain English. Judge once, store the answers, index the result.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231c1c1c'/><text x='16' y='23' font-family='ui-monospace,monospace' font-size='19' font-weight='700' fill='%2387f700' text-anchor='middle'>j</text></svg>">
+<style>
+  @font-face{font-family:"SG";src:url("fonts/SpaceGrotesk.woff2") format("woff2");font-weight:300 700;font-display:swap}
+  @font-face{font-family:"JBM";src:url("fonts/JetBrainsMono.woff2") format("woff2");font-weight:400 700;font-display:swap}
+
+  :root{
+    --bg:#f5f3f2; --bg-100:#fafaf9; --bg-200:#f4f4f4; --bg-white:#fff;
+    --border:#7f806f; --border-100:#7f806f;
+    --tint-olive-06:color-mix(in srgb,var(--border) 6%,transparent);
+    --tint-olive-08:rgb(127 128 111 / .08);
+    --tint-olive-12:color-mix(in srgb,var(--border) 12%,transparent);
+    --tint-ink-04:color-mix(in srgb,#1c1c1c 4%,transparent);
+    --ink:#1c1c1c; --ink-soft:#404040; --muted:#737373;
+    --accent:#87f700; --accent-hover:#79e000; --accent-active:#6fce00;
+    --surface-dark:#1c1c1c;
+    /* illustration palette: five values, flat, no gradients */
+    --illus-top:#f5f3f2; --illus-left:#eeecea; --illus-right:#e0dedb; --illus-line:#7f806f; --illus-ink:#1c1c1c;
+    --syntax-key:#366300; --syntax-val:#146ef5; --syntax-str:#4f8a55; --syntax-comment:#737373;
+    --nav-h:4rem; --container:90rem; --cell:48rem; --read:41rem;
+    --h1-fs:clamp(2rem,4vw,3.5rem); --h-fs:6rem; --h-lh:1.08; --h-ls:-.04em;
+    --sec-pad:5.75rem; --sec-pad-sm:3.5rem;
+    --btn-bg:#1c1c1c; --btn-bg-hover:#2a2a2a; --btn-text:#f5f3f2;
+    --beat:5s;
+    --font-display:"SG",ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    --font-mono:"JBM",ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  @media (max-width:1024px){:root{--sec-pad:4.5625rem;--sec-pad-sm:2.875rem}}
+  @media (max-width:540px){:root{--h1-fs:2.5rem;--h-ls:-.03em;--sec-pad:3.375rem;--sec-pad-sm:2.25rem}}
+
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font:500 1rem/1.5 var(--font-display);letter-spacing:-.01em}
+  h1,h2,h3{margin:0;font-weight:500;letter-spacing:var(--h-ls);line-height:var(--h-lh)}
+  h1{font-size:var(--h1-fs)}
+  h2{font-size:2.5rem;line-height:1.26;letter-spacing:-.04em}
+  @media (max-width:540px){h2{font-size:1.75rem}}
+  h3{font-size:1.0625rem;font-weight:500;letter-spacing:-.02em;line-height:1.3}
+  p{margin:0 0 1rem}
+  a{color:inherit}
+  :focus-visible{outline:2px solid #93c5fd;outline-offset:2px}
+  .wrap{max-width:var(--container);margin:0 auto;padding:0 2rem}
+  .cell{max-width:var(--cell)}
+  .read{max-width:var(--read)}
+  .lede{font-size:1.25rem;font-weight:400;line-height:1.2;letter-spacing:-.02em;max-width:var(--read);color:var(--muted)}
+  code,pre{font-family:var(--font-mono)}
+  code{font-size:.8125rem;background:var(--bg-white);border:1px solid var(--border-100);border-radius:.25rem;padding:.05rem .3rem}
+  pre{margin:0;background:var(--bg-white);border:1px solid var(--border-100);border-radius:.25rem;padding:1rem 1.125rem;overflow-x:auto;font-size:12px;line-height:1.7}
+  pre code{background:none;border:0;padding:0;font-size:inherit}
+  .k{color:var(--syntax-key)} .v{color:var(--syntax-val)} .s{color:var(--syntax-str)} .c{color:var(--syntax-comment)}
+  .rule{border-top:1px solid var(--border-100)}
+  .label{font:500 .875rem/1.12 var(--font-mono);letter-spacing:-.02em;color:color-mix(in srgb,var(--ink) 64%,transparent)}
+
+  .announce{background:#000;color:var(--btn-text)}
+  .announce__inner{min-height:1.75rem;max-width:var(--container);margin:0 auto;padding:.6875rem 1.5rem;line-height:1.2;
+    display:flex;align-items:center;justify-content:center;gap:.75rem;font-size:.8125rem;letter-spacing:-.01em}
+  .announce b{color:var(--accent);font-weight:500}
+
+  nav.nav{position:sticky;top:0;z-index:200;background:var(--bg);border-bottom:1px solid transparent;
+    transition:background-color .25s ease,border-color .25s ease}
+  nav.nav.scrolled{border-bottom-color:rgb(28 28 28 / .08)}
+  .nav__inner{max-width:var(--container);height:var(--nav-h);margin:0 auto;padding:0 2rem;display:flex;align-items:center;gap:2rem}
+  .nav__logo{font-size:1.125rem;font-weight:500;letter-spacing:-.02em;text-decoration:none}
+  .nav__logo i{color:var(--accent);font-style:normal}
+  .nav__list{display:flex;align-items:center;gap:1rem;margin:0;padding:0;list-style:none}
+  .nav__item{display:block;font-size:.875rem;letter-spacing:-.02em;text-decoration:none;padding:.4375rem .625rem;
+    border-radius:.5rem;transition:background-color .15s ease}
+  .nav__item:hover{background:var(--tint-ink-04)}
+  .nav__actions{margin-left:auto;display:flex;align-items:center;gap:.5rem}
+  .nav__burger{display:none;flex-direction:column;justify-content:center;gap:.3125rem;width:2.5rem;height:2.5rem;
+    background:0 0;border:0;cursor:pointer;padding:0}
+  .nav__burger span{display:block;height:1.5px;width:1.375rem;border-radius:.125rem;background:var(--ink)}
+  @media (max-width:1200px){.nav__list{display:none}.nav__burger{display:flex}}
+
+  .btn{display:inline-flex;align-items:center;gap:.5rem;font-family:var(--font-mono);font-size:1rem;font-weight:500;line-height:1.12;
+    letter-spacing:-.02em;text-transform:uppercase;text-decoration:none;border:1px solid transparent;border-radius:.5rem;
+    padding:.6875rem 1.125rem;cursor:pointer;
+    transition:background-color .18s ease,border-color .18s ease,color .18s ease,opacity .18s ease,transform .12s ease}
+  .btn .arrow{transition:transform .12s ease}
+  .btn:hover .arrow{transform:translate(2px)}
+  .btn:active{transform:scale(.97)}
+  .btn--sm{padding:.4375rem .625rem;font-size:.75rem}
+  .btn--pill{border-radius:1.5rem;padding:.75rem 1.125rem .75rem 1.375rem}
+  .btn--accent{background:var(--accent);color:var(--ink)}
+  .btn--accent:hover{background:var(--accent-hover)}
+  .btn--accent:active{background:var(--accent-active)}
+  .btn--dark{background:var(--btn-bg);color:var(--btn-text)}
+  .btn--dark:hover{background:var(--btn-bg-hover)}
+  .btn--dark:active{background:#333}
+  .btn--ghost{background:var(--tint-olive-06)}
+  .btn--ghost:hover{background:var(--tint-olive-12)}
+  .btn--onDark{border-color:var(--illus-line);color:var(--btn-text)}
+  .btn--onDark:hover{background:color-mix(in srgb,#fff 10%,transparent)}
+  .link{font-weight:500;text-decoration:none;border-bottom:1px solid var(--border-100);padding-bottom:1px}
+  .link:hover{border-color:var(--ink)}
+
+  .copy{position:absolute;top:.5rem;right:.5rem;font-family:var(--font-mono);font-size:.6875rem;
+    background:var(--bg);color:var(--muted);border:1px solid var(--border-100);border-radius:.25rem;
+    padding:.2rem .5rem;cursor:pointer;transition:color .12s ease}
+  .copy:hover{color:var(--ink)}
+  .code-wrap{position:relative}
+
+  .hero{display:grid;grid-template-columns:minmax(48rem,1fr) 12rem 1fr;grid-template-rows:auto auto;
+    border-bottom:1px solid var(--border-100)}
+  .hero-heading-cell{grid-column:1;grid-row:1;padding:clamp(7rem,13vh,17.5rem) 2rem 3rem;border-right:1px solid var(--border-100);position:relative}
+  .hero-heading-cell:after{content:"";position:absolute;left:0;right:-100vw;bottom:0;border-top:1px solid var(--border-100)}
+  .hero h1 .dim{color:var(--border)}
+  .hero-body-cell{grid-column:1;grid-row:2;padding:3rem 2rem .5rem;border-right:1px solid var(--border-100);
+    display:flex;flex-direction:column;gap:1rem}
+  .hero-body-cell .row{display:flex;gap:.75rem;flex-wrap:wrap;align-items:center}
+  .hero-media{grid-column:2;grid-row:1 / span 2;border-right:1px solid var(--border-100);overflow:hidden;
+    position:relative;background:#fbfbfb;border-top:1px solid var(--border-100)}
+  .hero-media svg{position:absolute;inset:0;width:100%;height:100%;display:block}
+  .hero-trust{grid-column:3;grid-row:2;padding:.5rem 2rem 3rem}
+  .hero-trust .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:.75rem;margin-top:1.5rem}
+  .hero-trust .grid span{display:flex;align-items:center;justify-content:center;min-height:7.25rem;border-radius:.25rem;
+    background:var(--tint-olive-06);font:500 .875rem/1.12 var(--font-mono);letter-spacing:-.02em;
+    color:color-mix(in srgb,var(--ink) 72%,transparent)}
+  @media (max-width:1200px){
+    .hero{grid-template-columns:1fr}
+    .hero-heading-cell{border-right:0;padding:clamp(3.5rem,9vh,7rem) 2rem 1.5rem}
+    .hero-media{display:none}
+    .hero-body-cell{padding:0 2rem 3.5rem;border-right:0}
+    .hero-trust{padding:1.5rem 2rem 3.5rem}
+  }
+
+  .panel{background:#fbfbfb;border:0;border-radius:.5rem;overflow:hidden;margin:0 auto;max-width:1158px;
+    box-shadow:0 10px 34px color-mix(in srgb,#1c1c1c 9%,transparent);min-height:51.875rem;
+    display:flex;flex-direction:column}
+  .panel__bar{display:flex;align-items:center;justify-content:center;gap:.75rem;padding:1rem;border-bottom:1px solid var(--border-100)}
+  .panel__pill{background:var(--bg-white);border:1px solid var(--border-100);border-radius:1.5rem;
+    padding:.4375rem 1rem;font:500 .875rem/1.12 var(--font-mono);letter-spacing:-.02em;
+    color:color-mix(in srgb,var(--ink) 72%,transparent)}
+  .panel__tabs{display:flex;gap:.25rem;justify-content:center;padding:.75rem 1rem;border-bottom:1px solid var(--border-100);
+    font:500 .875rem/1.12 var(--font-mono);letter-spacing:-.02em;color:color-mix(in srgb,var(--ink) 64%,transparent)}
+  .panel__tab{border-radius:.25rem;padding:.375rem .625rem}
+  .panel__tab[aria-selected="true"]{background:var(--tint-olive-06);color:var(--ink)}
+  .panel__grow{flex:1;display:flex;align-items:center}
+  .panel__grow > *{width:100%}
+  .panel pre{border:0;border-radius:0;background:transparent;padding:1.75rem;position:relative;z-index:1}
+  .panel__float{position:absolute;right:1.5rem;bottom:1.5rem;z-index:2;background:var(--bg-white);
+    border:1px solid var(--tint-olive-12);border-radius:.5rem;box-shadow:0 12px 30px color-mix(in srgb,#1c1c1c 12%,transparent);
+    padding:.875rem 1rem;font:500 .875rem/1.12 var(--font-mono);letter-spacing:-.02em;color:var(--ink-soft)}
+  .panel__grid{display:grid;grid-template-columns:1fr 1fr;gap:0}
+  .panel__grid > div + div{border-left:1px solid var(--border-100)}
+  @media (max-width:1024px){.panel__grid{grid-template-columns:1fr}.panel__grid > div + div{border-left:0;border-top:1px solid var(--border-100)}}
+
+  .strip{overflow:hidden;border-bottom:1px solid var(--border-100);background:var(--bg-100)}
+  .strip--stats{border-top:1px solid var(--border-100);border-bottom:0;background:var(--bg)}
+  .strip--top{border-top:1px solid var(--border-100)}
+  .marquee{overflow:hidden}
+  .marquee .track{display:flex;width:max-content;animation:marquee 114s linear infinite}
+  .marquee:hover .track{animation-play-state:paused}
+  @keyframes marquee{0%{transform:translate(0)}to{transform:translate(-50%)}}
+  .stat{display:flex;align-items:baseline;gap:.75rem;padding:1.75rem 2.5rem;min-width:18rem}
+  .stat span{font:500 .875rem/1.12 var(--font-display);letter-spacing:-.02em;
+    color:color-mix(in srgb,var(--ink) 64%,transparent);white-space:nowrap}
+  .stat b{font:500 .875rem/1.12 var(--font-display);letter-spacing:-.02em;font-variant-numeric:tabular-nums;
+    background:var(--tint-olive-06);border-radius:.25rem;padding:.4375rem .5rem;white-space:nowrap;
+    transition:background-color .2s ease}
+  .stat:hover b{background:var(--accent)}
+  .logos .track{gap:2.5rem;padding:1.125rem 0;align-items:center;
+    font:500 .875rem/1.12 var(--font-mono);text-transform:uppercase;letter-spacing:-.02em;color:var(--muted)}
+  .logos .track span{margin:0 1.25rem;white-space:nowrap}
+
+  section{background:var(--bg)}
+  .pad{padding-block:var(--sec-pad)}
+  .pad-tight{padding-block:var(--sec-pad-sm)}
+  .split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:3rem;align-items:start}
+  @media (max-width:1024px){.split{grid-template-columns:1fr;gap:2rem}}
+
+  /* concept cards: the reference's platform-card anatomy, 33.75rem tall, tinted, no border */
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem}
+  @media (max-width:1024px){.cards{grid-template-columns:repeat(2,1fr)}}
+  @media (max-width:540px){.cards{grid-template-columns:1fr}}
+  .card{background:var(--bg-white);border:0;border-radius:.25rem;padding:1.5rem;min-height:33.75rem;
+    display:flex;flex-direction:column;gap:1rem;transition:background-color .5s,box-shadow .5s}
+  @media (max-width:1024px){.card{min-height:30.5rem;padding:1.375rem}}
+  @media (max-width:540px){.card{min-height:30rem;padding:1.25rem}}
+  .card .idx{display:flex;align-items:center;justify-content:space-between;gap:1rem;
+    font:500 .875rem/1.12 var(--font-mono);letter-spacing:-.02em;
+    color:color-mix(in srgb,var(--ink) 32%,transparent)}
+  .card .art{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:1rem;
+    background:var(--tint-olive-08);border-radius:.25rem}
+  .card .art svg{width:100%;height:auto;max-height:16rem}
+  .card h3{font-size:1.5rem;font-weight:500;letter-spacing:-.02em;line-height:1.2}
+  .card p{color:color-mix(in srgb,var(--ink) 64%,transparent);font-size:1rem;font-weight:400;line-height:1.48;margin:0}
+  .card .foot{margin-top:auto;padding-top:1rem;border-top:1px solid var(--border-100);
+    font:500 .875rem/1.12 var(--font-mono);letter-spacing:-.02em;color:color-mix(in srgb,var(--ink) 64%,transparent)}
+
+  /* isometric motion: one lattice step per beat, plus arrow draws. No JS, no third party. */
+  .iso-step{animation:isoStep var(--beat) steps(1,end) infinite}
+  @keyframes isoStep{0%{transform:translate(0,0)}33%{transform:translate(36px,-21px)}66%,100%{transform:translate(72px,-42px)}}
+  @media (prefers-reduced-motion:reduce){.iso-step,.iso-draw{animation:none}.iso-step{transform:translate(72px,-42px)}}
+  .iso-draw{stroke-dasharray:1;animation:isoDraw var(--beat) linear infinite}
+  @keyframes isoDraw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
+
+  .asks{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+  @media (max-width:1024px){.asks{grid-template-columns:1fr}}
+  .ask{background:var(--bg-white);border:1px solid var(--tint-olive-12);border-radius:.25rem;padding:1.5rem;
+    display:flex;flex-direction:column;gap:.875rem}
+  .ask h3{font-size:1.5rem}
+  .ask pre{margin:0}
+  .ask p{color:var(--muted);font-size:1rem;line-height:1.48;margin:0}
+
+  table{border-collapse:collapse;width:100%;font-size:.875rem}
+  th,td{text-align:left;padding:.75rem 1rem .75rem 0;border-bottom:1px solid var(--border-100);vertical-align:top}
+  th{font:500 .875rem/1.12 var(--font-mono);letter-spacing:-.02em;text-transform:uppercase;color:var(--muted)}
+  td code{white-space:nowrap}
+  ul.facts{padding-left:1.15em;margin:0;color:var(--ink-soft)}
+  ul.facts li{margin-bottom:.5rem}
+
+  .cta{background:var(--bg);color:var(--ink);min-height:35.25rem;padding-block:4rem;text-align:center;
+    display:flex;align-items:center;justify-content:center;border-bottom:1px solid var(--border-100)}
+  .cta .wrap{width:100%}
+  .cta h2{font-size:var(--h-fs);letter-spacing:-.04em;font-weight:500;line-height:1.08;margin:0 auto;max-width:80rem}
+  .cta p{color:var(--muted);margin-left:auto;margin-right:auto}
+  .cta .row{display:flex;gap:.5rem;flex-wrap:wrap;justify-content:center;margin-top:1.5rem}
+  @media (max-width:1024px){.cta{min-height:0}}
+
+  footer{background:var(--surface-dark);color:var(--btn-text);font-size:.875rem}
+  footer .wrap{display:grid;grid-template-columns:25.125rem 1fr;gap:0;padding:4rem 2rem 4rem 0}
+  footer .brand{color:var(--btn-text);font-size:1.125rem;font-weight:500;letter-spacing:-.02em}
+  footer nav{display:grid;grid-template-columns:repeat(6,1fr);gap:1.5rem;padding-left:2rem;
+    border-left:1px solid color-mix(in srgb,#f5f3f2 8%,transparent)}
+  footer a{text-decoration:none;display:block;margin-bottom:.5rem;color:var(--btn-text);
+    transition:color .15s cubic-bezier(.23,1,.32,1)}
+  footer a:hover{color:var(--accent)}
+  footer .head{color:color-mix(in srgb,var(--btn-text) 64%,transparent);margin-bottom:.75rem;
+    font-family:var(--font-mono);font-size:.875rem;letter-spacing:-.02em;text-transform:uppercase}
+  footer .legal{color:color-mix(in srgb,var(--btn-text) 64%,transparent)}
+  footer .bottom{grid-column:1 / -1;margin-top:3rem;padding-top:1.5rem;display:grid;
+    grid-template-columns:25.125rem 1fr;gap:1rem;border-top:1px solid color-mix(in srgb,#f5f3f2 8%,transparent);
+    color:color-mix(in srgb,var(--btn-text) 64%,transparent)}
+  @media (max-width:1024px){footer .wrap{grid-template-columns:1fr}footer nav{grid-template-columns:repeat(3,1fr);padding-left:0;border-left:0;border-top:1px solid color-mix(in srgb,#f5f3f2 8%,transparent);padding-top:2rem;margin-top:2rem}footer .bottom{grid-template-columns:1fr}}
+  @media (max-width:540px){footer nav{grid-template-columns:repeat(2,1fr)}}
+
+  .reveal{opacity:0;transform:translateY(8px);transition:opacity .45s cubic-bezier(.22,1,.36,1),transform .45s cubic-bezier(.22,1,.36,1)}
+  .reveal.in{opacity:1;transform:none}
+  @media (prefers-reduced-motion:reduce){
+    *,*:before,*:after{transition-duration:.001ms !important;animation-duration:.001ms !important;animation-iteration-count:1 !important}
+    .reveal{opacity:1;transform:none}
+  }
+</style>
+</head>
+<body>
+
+<div class="announce">
+  <div class="announce__inner">
+    <b>0.2.0</b><span>Tagged conditions become indexed columns: 0.07&nbsp;ms at 20,000 rows.</span>
+  </div>
+</div>
+
+<nav class="nav" id="nav">
+  <div class="nav__inner">
+    <a class="nav__logo" href="#top">sql<i>·</i>jev</a>
+    <ul class="nav__list">
+      <li><a class="nav__item" href="#how">How it works</a></li>
+      <li><a class="nav__item" href="#tag">Indexable</a></li>
+      <li><a class="nav__item" href="#start">Start</a></li>
+      <li><a class="nav__item" href="#deploy">Deploy</a></li>
+      <li><a class="nav__item" href="https://github.com/sashimikun/sql-jev">GitHub</a></li>
+    </ul>
+    <div class="nav__actions">
+      <a class="nav__item" href="#how">Docs</a>
+      <a class="btn btn--ghost btn--sm" href="https://github.com/sashimikun/sql-jev">GitHub</a>
+      <a class="btn btn--accent btn--sm" href="#start">Start in 2 minutes</a>
+      <button class="nav__burger" type="button" aria-label="Menu" onclick="document.getElementById('nav').classList.toggle('open')">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </div>
+</nav>
+
+<main id="top">
+
+<header class="hero">
+  <div class="hero-heading-cell">
+    <h1>Ask your tables questions<br><span class="dim">in plain English.</span></h1>
+  </div>
+
+  <!-- 30-degree lattice: every edge runs at tan30 = 0.5774 (dx=36, dy=21). One cube primitive. -->
+  <div class="hero-media">
+    <svg viewBox="0 0 192 510" role="img" aria-label="Isometric column: rows are read ahead, judged into a table, and served by an index.">
+<text x="8" y="20" font-family="JBM,monospace" font-size="12" fill="#7f806f">INDEX</text><g data-solid="" data-height="50" stroke="#1c1c1c" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M96 40 L132 61 L96 82 L60 61 Z" fill="#87f700"/><path data-face="left" d="M60 61 L96 82 L96 132 L60 111 Z" fill="#79e000"/><path data-face="right" d="M96 82 L132 61 L132 111 L96 132 Z" fill="#6fce00"/></g><path class="iso-draw" pathLength="1" d="M96 156 L96 140 M96 140 L90 148 M96 140 L102 148" fill="none" stroke="#1c1c1c" stroke-width="1.25"/><text x="8" y="196" font-family="JBM,monospace" font-size="12" fill="#7f806f">JUDGMENTS</text><g data-solid="" data-height="50" stroke="#1c1c1c" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M96 215 L132 236 L96 257 L60 236 Z" fill="#f5f3f2"/><path data-face="left" d="M60 236 L96 257 L96 307 L60 286 Z" fill="#eeecea"/><path data-face="right" d="M96 257 L132 236 L132 286 L96 307 Z" fill="#e0dedb"/></g><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M60 278 L96 299 L60 320 L24 299 Z" fill="#f5f3f2"/><path data-face="left" d="M24 299 L60 320 L60 328 L24 307 Z" fill="#eeecea"/><path data-face="right" d="M60 320 L96 299 L96 307 L60 328 Z" fill="#e0dedb"/></g><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M132 278 L168 299 L132 320 L96 299 Z" fill="#f5f3f2"/><path data-face="left" d="M96 299 L132 320 L132 328 L96 307 Z" fill="#eeecea"/><path data-face="right" d="M132 320 L168 299 L168 307 L132 328 Z" fill="#e0dedb"/></g><path class="iso-draw" pathLength="1" d="M96 377 L96 358 M96 358 L90 366 M96 358 L102 366" fill="none" stroke="#1c1c1c" stroke-width="1.25"/><text x="8" y="405" font-family="JBM,monospace" font-size="12" fill="#7f806f">ROWS</text><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M132 407 L168 428 L60 491 L24 470 Z" fill="#f5f3f2"/><path data-face="left" d="M24 470 L60 491 L60 499 L24 478 Z" fill="#eeecea"/><path data-face="right" d="M60 491 L168 428 L168 436 L60 499 Z" fill="#e0dedb"/></g><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M132 399 L168 420 L132 441 L96 420 Z" fill="#f5f3f2"/><path data-face="left" d="M96 420 L132 441 L132 449 L96 428 Z" fill="#eeecea"/><path data-face="right" d="M132 441 L168 420 L168 428 L132 449 Z" fill="#e0dedb"/></g><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M96 420 L132 441 L96 462 L60 441 Z" fill="#f5f3f2"/><path data-face="left" d="M60 441 L96 462 L96 470 L60 449 Z" fill="#eeecea"/><path data-face="right" d="M96 462 L132 441 L132 449 L96 470 Z" fill="#e0dedb"/></g><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M60 441 L96 462 L60 483 L24 462 Z" fill="#f5f3f2"/><path data-face="left" d="M24 462 L60 483 L60 491 L24 470 Z" fill="#eeecea"/><path data-face="right" d="M60 483 L96 462 L96 470 L60 491 Z" fill="#e0dedb"/></g><g data-solid="" data-height="8" class="iso-step" stroke="#1c1c1c" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M60 433 L96 454 L60 475 L24 454 Z" fill="#87f700"/><path data-face="left" d="M24 454 L60 475 L60 483 L24 462 Z" fill="#79e000"/><path data-face="right" d="M60 475 L96 454 L96 462 L60 483 Z" fill="#6fce00"/></g>
+</svg>
+  </div>
+
+  <div class="hero-body-cell">
+    <p class="lede">Write the condition the way you would say it. JavaScript talks to the model, SQLite
+      answers from a table of judgments — so the second run costs nothing, and a tagged condition stays
+      indexable forever.</p>
+    <div class="row">
+      <a class="btn btn--accent" href="#start">Start in 2 minutes <span class="arrow">→</span></a>
+      <a class="btn btn--ghost" href="#how">See what SQLite runs <span class="arrow">→</span></a>
+    </div>
+  </div>
+
+  <div class="hero-trust">
+    <p class="label" style="margin:0">Works with</p>
+    <div class="grid">
+      <span>SQLite</span><span>Turso / libSQL</span><span>Cloudflare D1</span><span>Workers</span><span>Bun</span><span>node:sqlite</span>
+    </div>
+  </div>
+</header>
+
+<div class="strip strip--stats">
+  <div class="marquee">
+    <div class="track">
+      <div class="stat"><b data-count="20000">0</b><span>rows judged in the bench</span></div>
+      <div class="stat"><b data-count="100" data-suffix="%">0</b><span>judgments reused on a re-run</span></div>
+      <div class="stat"><b data-count="0">0</b><span>API calls, second run</span></div>
+      <div class="stat"><b data-count="20" data-suffix="×">0</b><span>faster than a full scan at 5k</span></div>
+      <div class="stat"><b data-count="191">0</b><span>tests, no credentials</span></div>
+      <div class="stat"><b data-count="0.0008" data-prefix="$" data-decimals="4">0</b><span>per 200 rows judged</span></div>
+      <div class="stat"><b data-count="20000">0</b><span>rows judged in the bench</span></div>
+      <div class="stat"><b data-count="100" data-suffix="%">0</b><span>judgments reused on a re-run</span></div>
+      <div class="stat"><b data-count="0">0</b><span>API calls, second run</span></div>
+      <div class="stat"><b data-count="20" data-suffix="×">0</b><span>faster than a full scan at 5k</span></div>
+      <div class="stat"><b data-count="191">0</b><span>tests, no credentials</span></div>
+      <div class="stat"><b data-count="0.0008" data-prefix="$" data-decimals="4">0</b><span>per 200 rows judged</span></div>
+    </div>
+  </div>
+
+<section id="proof">
+  <div class="wrap pad">
+    <div class="panel">
+      <div class="panel__bar">
+        <span class="panel__dot"></span><span class="panel__dot"></span><span class="panel__dot"></span>
+        <span style="margin-left:.75rem">bun run bench/bench.ts --rows 20000</span>
+      </div>
+      <div class="panel__tabs"><span class="panel__tab" aria-selected="true">bench</span><span class="panel__tab">schema</span><span class="panel__tab">worker</span><span class="panel__tab">stats</span></div>
+      <div class="panel__grid">
+        <div>
+          <pre><code>rows=20000 cold=1621.74ms warm=238.87ms
+     indexed=0.07ms scanned=26.78ms matches=4000
+     writes=20001 exec=192 maxStmt=760B
+
+<span class="c"># second run: 0 API calls, judgments reused</span>
+<span class="c"># tag(): 20,000 rows written in 192 exec() calls</span></code></pre>
+        </div>
+        <div>
+          <pre><code><span class="k">await</span> jev.tag(<span class="s">'people'</span>, <span class="s">'the name is European'</span>);
+
+<span class="k">SELECT</span> * <span class="k">FROM</span> people
+<span class="k">WHERE</span> jev_the_name_is_european = <span class="v">1</span>;
+
+<span class="c">-- real D1: SEARCH people USING COVERING INDEX</span>
+<span class="c">-- 20,000 rows: 0.07 ms vs 26.78 ms through jev()</span></code></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+</div>
+
+<section class="rule" id="asks">
+  <div class="wrap pad">
+    <div class="cell" style="margin-bottom:2rem">
+      <h2>What developers actually ask.</h2>
+      <p class="lede">One query each. No embeddings, no training set, no vector column — and the second
+        run costs nothing.</p>
+    </div>
+    <div class="asks">
+      <article class="ask reveal">
+        <h3>Route every ticket to the right team</h3>
+        <pre><code><span class="k">SELECT</span> jev_choice(tickets, <span class="s">'which team should handle this?'</span>,
+                  ARRAY[<span class="s">'billing'</span>,<span class="s">'technical'</span>,<span class="s">'security'</span>,<span class="s">'sales'</span>]) <span class="k">AS</span> team,
+       count(*)
+<span class="k">FROM</span> tickets <span class="k">GROUP BY</span> <span class="v">1</span> <span class="k">ORDER BY</span> <span class="v">2</span> <span class="k">DESC</span>;</code></pre>
+        <p>Per-team counts from a sentence, replacing the keyword rules nobody wants to maintain.</p>
+      </article>
+      <article class="ask reveal">
+        <h3>Rank accounts by churn risk</h3>
+        <pre><code><span class="k">SELECT</span> subject, jev_prob(tickets, <span class="s">'the customer is about to churn'</span>) <span class="k">AS</span> p
+<span class="k">FROM</span> tickets <span class="k">ORDER BY</span> p <span class="k">DESC</span> <span class="k">LIMIT</span> <span class="v">20</span>;</code></pre>
+        <p>A calibrated 0..1 per row, so you choose the threshold instead of guessing it.</p>
+      </article>
+      <article class="ask reveal">
+        <h3>Score a catalogue on a rubric</h3>
+        <pre><code><span class="k">SELECT</span> name, jev_score(products, <span class="s">'how luxurious is this?'</span>,
+                       ARRAY[<span class="s">'budget'</span>,<span class="s">'mid-range'</span>,<span class="s">'premium'</span>,<span class="s">'luxury'</span>]) <span class="k">AS</span> tier
+<span class="k">FROM</span> products <span class="k">ORDER BY</span> tier <span class="k">DESC</span>;</code></pre>
+        <p>Ordered levels with no labelled data, comparable across every row.</p>
+      </article>
+      <article class="ask reveal">
+        <h3>Filter the way you would say it</h3>
+        <pre><code><span class="k">SELECT</span> * <span class="k">FROM</span> people
+<span class="k">WHERE</span> jev(people, <span class="s">'the name is European'</span>) <span class="k">AND</span> age &gt; <span class="v">40</span>;</code></pre>
+        <p>It is a boolean, so it composes with every join, index and predicate you already have.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap pad">
+    <div class="cell" style="margin-bottom:2rem">
+      <h2>Judge once. Store the answer. Read it back.</h2>
+      <p class="lede">Hosted SQLite has no user-defined functions and cannot call the network from SQL,
+        so the model call moves to JavaScript and the answers move into a table.</p>
+    </div>
+
+    <div class="cards">
+      <article class="card reveal">
+        <div class="idx"><span>01 / read</span><span>40 rows</span></div>
+        <div class="art">
+          <svg viewBox="0 0 288 190" role="img" aria-label="Isometric rows packed into a batch">
+<path class="iso-draw" pathLength="1" d="M36 120 L72 141 L180 78 L216 99" fill="none" stroke="#7f806f" stroke-width="1.25"/><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M180 52 L216 73 L72 157 L36 136 Z" fill="#f5f3f2"/><path data-face="left" d="M36 136 L72 157 L72 165 L36 144 Z" fill="#eeecea"/><path data-face="right" d="M72 157 L216 73 L216 81 L72 165 Z" fill="#e0dedb"/></g><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M180 44 L216 65 L180 86 L144 65 Z" fill="#f5f3f2"/><path data-face="left" d="M144 65 L180 86 L180 94 L144 73 Z" fill="#eeecea"/><path data-face="right" d="M180 86 L216 65 L216 73 L180 94 Z" fill="#e0dedb"/></g><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M144 65 L180 86 L144 107 L108 86 Z" fill="#f5f3f2"/><path data-face="left" d="M108 86 L144 107 L144 115 L108 94 Z" fill="#eeecea"/><path data-face="right" d="M144 107 L180 86 L180 94 L144 115 Z" fill="#e0dedb"/></g><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M108 86 L144 107 L108 128 L72 107 Z" fill="#f5f3f2"/><path data-face="left" d="M72 107 L108 128 L108 136 L72 115 Z" fill="#eeecea"/><path data-face="right" d="M108 128 L144 107 L144 115 L108 136 Z" fill="#e0dedb"/></g><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M72 107 L108 128 L72 149 L36 128 Z" fill="#f5f3f2"/><path data-face="left" d="M36 128 L72 149 L72 157 L36 136 Z" fill="#eeecea"/><path data-face="right" d="M72 149 L108 128 L108 136 L72 157 Z" fill="#e0dedb"/></g><g data-solid="" data-height="8" stroke="#1c1c1c" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M108 78 L144 99 L108 120 L72 99 Z" fill="#87f700"/><path data-face="left" d="M72 99 L108 120 L108 128 L72 107 Z" fill="#79e000"/><path data-face="right" d="M108 120 L144 99 L144 107 L108 128 Z" fill="#6fce00"/></g>
+</svg>
+        </div>
+        <h3>Read ahead, then batch</h3>
+        <p>The scanned relation is read once by row id, packed 40 rows per request, six requests in flight.</p>
+        <div class="foot">1 request / 40 rows</div>
+      </article>
+
+      <article class="card reveal">
+        <div class="idx"><span>02 / judge</span><span>one state</span></div>
+        <div class="art">
+          <svg viewBox="0 0 288 190" role="img" aria-label="Isometric judgments table, one row per judged record">
+<g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M144 35 L216 77 L108 140 L36 98 Z" fill="#f5f3f2"/><path data-face="left" d="M36 98 L108 140 L108 148 L36 106 Z" fill="#eeecea"/><path data-face="right" d="M108 140 L216 77 L216 85 L108 148 Z" fill="#e0dedb"/></g><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M144 27 L216 69 L180 90 L108 48 Z" fill="#f5f3f2"/><path data-face="left" d="M108 48 L180 90 L180 98 L108 56 Z" fill="#eeecea"/><path data-face="right" d="M180 90 L216 69 L216 77 L180 98 Z" fill="#e0dedb"/></g><g data-key="" fill="none" stroke="#1c1c1c" stroke-width="1.25"><circle cx="135" cy="48" r="4"/><path d="M135 48 L171 69 M171 69 V63 M162 63.75 V57.75"/></g><g data-solid="" data-height="8" stroke="#1c1c1c" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M108 48 L180 90 L144 111 L72 69 Z" fill="#87f700"/><path data-face="left" d="M72 69 L144 111 L144 119 L72 77 Z" fill="#79e000"/><path data-face="right" d="M144 111 L180 90 L180 98 L144 119 Z" fill="#6fce00"/></g><g data-key="" fill="none" stroke="#1c1c1c" stroke-width="1.25"><circle cx="99" cy="69" r="4"/><path d="M99 69 L135 90 M135 90 V84 M126 84.75 V78.75"/></g><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M72 69 L144 111 L108 132 L36 90 Z" fill="#f5f3f2"/><path data-face="left" d="M36 90 L108 132 L108 140 L36 98 Z" fill="#eeecea"/><path data-face="right" d="M108 132 L144 111 L144 119 L108 140 Z" fill="#e0dedb"/></g><g data-key="" fill="none" stroke="#1c1c1c" stroke-width="1.25"><circle cx="63" cy="90" r="4"/><path d="M63 90 L99 111 M99 111 V105 M90 105.75 V99.75"/></g><text x="24" y="174" font-family="JBM,monospace" font-size="12" fill="#7f806f">row + condition + model</text>
+</svg>
+        </div>
+        <h3>Store it in <code>jev_judgments</code></h3>
+        <p>Keyed by relation, row id and judgment, with a content hash and the model in the key.</p>
+        <div class="foot">0 API calls on a re-run</div>
+      </article>
+
+      <article class="card reveal">
+        <div class="idx"><span>03 / read back</span><span>indexed</span></div>
+        <div class="art">
+          <svg viewBox="0 0 288 190" role="img" aria-label="Isometric indexed column: one lattice lookup instead of a scan">
+<g data-solid="" data-height="50" stroke="#1c1c1c" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M144 24 L180 45 L144 66 L108 45 Z" fill="#87f700"/><path data-face="left" d="M108 45 L144 66 L144 116 L108 95 Z" fill="#79e000"/><path data-face="right" d="M144 66 L180 45 L180 95 L144 116 Z" fill="#6fce00"/></g><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M72 66 L108 87 L72 108 L36 87 Z" fill="#f5f3f2"/><path data-face="left" d="M36 87 L72 108 L72 116 L36 95 Z" fill="#eeecea"/><path data-face="right" d="M72 108 L108 87 L108 95 L72 116 Z" fill="#e0dedb"/></g><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M108 87 L144 108 L108 129 L72 108 Z" fill="#f5f3f2"/><path data-face="left" d="M72 108 L108 129 L108 137 L72 116 Z" fill="#eeecea"/><path data-face="right" d="M108 129 L144 108 L144 116 L108 137 Z" fill="#e0dedb"/></g><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M180 87 L216 108 L180 129 L144 108 Z" fill="#f5f3f2"/><path data-face="left" d="M144 108 L180 129 L180 137 L144 116 Z" fill="#eeecea"/><path data-face="right" d="M180 129 L216 108 L216 116 L180 137 Z" fill="#e0dedb"/></g><path class="iso-draw" pathLength="1" d="M36 66 L108 24" fill="none" stroke="#7f806f" stroke-width="1.25"/>
+</svg>
+        </div>
+        <h3>Or tag it into a column</h3>
+        <p>One call writes <code>jev_*</code> 0/1 values and an index. After that the predicate is plain SQL.</p>
+        <div class="foot">0.07 ms at 20,000 rows</div>
+      </article>
+    </div>
+
+    <div class="code-wrap" style="margin-top:2rem">
+      <pre><code><span class="c">-- your query, rewritten: no extension, no user-defined function, no network from SQL</span>
+<span class="k">SELECT</span> * <span class="k">FROM</span> people
+<span class="k">WHERE</span> (COALESCE((<span class="k">SELECT</span> j.prob <span class="k">FROM</span> jev_judgments j
+                 <span class="k">WHERE</span> j.scope = <span class="s">'people'</span>
+                   <span class="k">AND</span> j.row_ref = CAST(<span class="s">"people"._rowid_</span> <span class="k">AS</span> TEXT)
+                   <span class="k">AND</span> j.judgment_key = <span class="s">'noul…the name is European…'</span>), -1.0)
+       &gt;= COALESCE(0.5, 0.5));</code><button class="copy" data-copy>copy</button></pre>
+    </div>
+  </div>
+</section>
+
+<section class="rule" id="tag">
+  <div class="wrap pad split">
+    <div>
+      <h2>Make it indexable</h2>
+      <p class="lede">Tag a condition once, then query it like any other column — from views, from CTEs,
+        from a client that has never heard of this library.</p>
+      <p class="label" style="margin:0">O(matches), not O(rows) · no rewriter</p>
+    </div>
+    <div>
+      <div class="code-wrap" style="margin-bottom:.75rem">
+        <pre><code><span class="k">await</span> jev.tag(<span class="s">'people'</span>, <span class="s">'the name is European'</span>);</code><button class="copy" data-copy>copy</button></pre>
+      </div>
+      <div class="code-wrap">
+        <pre><code><span class="k">SELECT</span> * <span class="k">FROM</span> people <span class="k">WHERE</span> jev_the_name_is_european = <span class="v">1</span>;</code><button class="copy" data-copy>copy</button></pre>
+      </div>
+      <table style="margin-top:1.25rem">
+        <tr><th>rows</th><th>through jev()</th><th>tagged, indexed</th></tr>
+        <tr><td>5,000</td><td>3.6 ms</td><td><b>0.02 ms</b></td></tr>
+        <tr><td>20,000</td><td>26.8 ms</td><td><b>0.07 ms</b></td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="rule" id="start">
+  <div class="wrap pad split">
+    <div>
+      <h2>Start — 2 minutes</h2>
+      <ul class="facts" style="margin-top:1rem">
+        <li><b>Full scan, on purpose.</b> Every scanned row goes to the model once.</li>
+        <li><b>Row contents leave your machine.</b> They go to TypeSafe.</li>
+        <li><b><code>jev()</code> needs a row id table.</b> Views and CTEs use the JS row API.</li>
+        <li><b>D1 allows 1000 queries per Worker invocation.</b> 5,000 rows is about 37 — warm big tables on a schedule.</li>
+        <li><b>Changing <code>model</code> re-judges.</b> <code>jev-latest</code> and <code>jev-1.13.0</code> never share answers; a change inside the alias needs a pinned version or a cleared table.</li>
+      </ul>
+    </div>
+    <div>
+      <div class="code-wrap" style="margin-bottom:.75rem">
+        <pre><code><span class="c">1.</span> git clone https://github.com/sashimikun/sql-jev &amp;&amp; cd sql-jev &amp;&amp; bun install
+<span class="c">2.</span> sqlite3 demo.db &lt; sql/sql-jev.sql
+<span class="c">3.</span> <span class="k">export</span> TYPESAFE_API_KEY=...   <span class="c"># console.typesafe.ai</span></code><button class="copy" data-copy>copy</button></pre>
+      </div>
+      <div class="code-wrap">
+        <pre><code><span class="c">// 4. ask.ts</span>
+<span class="k">import</span> { Database } <span class="k">from</span> <span class="s">'bun:sqlite'</span>;
+<span class="k">import</span> { createJev } <span class="k">from</span> <span class="s">'sql-jev'</span>;
+
+<span class="k">const</span> db = <span class="k">new</span> Database(<span class="s">'demo.db'</span>);
+<span class="k">const</span> jev = <span class="k">await</span> createJev({ db, apiKey: process.env.TYPESAFE_API_KEY });
+<span class="k">const</span> { rows } = <span class="k">await</span> jev.query(
+  <span class="s">`SELECT name FROM people WHERE jev(people, 'the name is European')`</span>,
+);</code><button class="copy" data-copy>copy</button></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="rule" id="deploy">
+  <div class="wrap pad split">
+    <div>
+      <h2>Deploy — one command</h2>
+      <p class="lede">Schema, secrets and a Worker where the platform needs one. <code>--dry-run</code>
+        prints the commands without running them.</p>
+    </div>
+    <div class="code-wrap">
+      <pre><code>bunx sql-jev deploy turso --db my-db            <span class="c"># Turso, ~3 min</span>
+bunx sql-jev deploy d1 --db my-db --worker      <span class="c"># Cloudflare D1, ~5 min</span>
+sqlite3 my.db &lt; sql/sql-jev.sql                <span class="c"># plain SQLite, 5 sec</span></code><button class="copy" data-copy>copy</button></pre>
+    </div>
+  </div>
+</section>
+
+<section class="rule" id="errors">
+  <div class="wrap pad split">
+    <div><h2>Four things that break a first run</h2></div>
+    <div>
+      <table>
+        <tr><th>says</th><th>do</th></tr>
+        <tr><td><code>jev: no API key</code></td><td>Set <code>TYPESAFE_API_KEY</code>, or <code>UPDATE jev_settings SET value='&lt;key&gt;' WHERE key='api_key'</code></td></tr>
+        <tr><td><code>jev_judgments is missing</code></td><td>Run step 2, or <code>await jev.schema()</code></td></tr>
+        <tr><td><code>Could not resolve "sql-jev"</code></td><td>Run step 1 (not on npm yet)</td></tr>
+        <tr><td><code>cannot read ahead … rowid</code></td><td>The relation has no row id. Use <code>await jev.filter(rows, cond)</code></td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="cta">
+  <div class="wrap">
+    <h2>Ask your tables<br>a question.</h2>
+    <p class="lede" style="margin-top:1rem">Two minutes from clone to a plain-English predicate that
+      costs nothing to run twice.</p>
+    <div class="row">
+      <a class="btn btn--accent" href="#start">Start now <span class="arrow">&rarr;</span></a>
+      <a class="btn btn--ghost" href="https://github.com/sashimikun/sql-jev">Read the source <span class="arrow">&rarr;</span></a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <div class="brand" style="margin-bottom:.75rem">sql<i style="color:var(--accent);font-style:normal">·</i>jev</div>
+      <p class="legal" style="max-width:22rem;margin:0">MIT. Needs a <a href="https://console.typesafe.ai">TypeSafe</a> key. Jev and TypeSafe are their owners' trademarks.</p>
+    </div>
+    <nav>
+      <div>
+        <div class="head">Start</div>
+        <a href="#start">Quickstart</a><a href="#deploy">Deploy</a><a href="#errors">Errors</a>
+      </div>
+      <div>
+        <div class="head">Learn</div>
+        <a href="#how">How it works</a><a href="#tag">Indexable columns</a><a href="#top">Top</a>
+      </div>
+      <div>
+        <div class="head">Code</div>
+        <a href="https://github.com/sashimikun/sql-jev">GitHub</a>
+        <a href="https://github.com/sashimikun/sql-jev/blob/main/bench/RESULTS.md">Benchmarks</a>
+        <a href="https://github.com/sashimikun/sql-jev/blob/main/CHANGELOG.md">Changelog</a>
+      </div>
+      <div>
+        <div class="head">Model</div>
+        <a href="https://console.typesafe.ai">TypeSafe console</a><a href="#start">API key</a><a href="#errors">No key</a>
+      </div>
+      <div>
+        <div class="head">Runtime</div>
+        <a href="https://bun.sh">Bun</a><a href="https://nodejs.org">Node 18+</a>
+        <a href="https://developers.cloudflare.com/d1/">D1</a>
+      </div>
+      <div>
+        <div class="head">Legal</div>
+        <a href="https://github.com/sashimikun/sql-jev/blob/main/LICENSE">MIT licence</a><a href="#top">Trademarks</a>
+      </div>
+    </nav>
+    <div class="bottom">
+      <span>sql-jev 0.2.0 · MIT</span>
+      <span>Judgments cost money once. Store them.</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+  const nav = document.getElementById('nav');
+  const onScroll = () => nav.classList.toggle('scrolled', window.scrollY > 8);
+  onScroll();
+  addEventListener('scroll', onScroll, { passive: true });
+
+  for (const button of document.querySelectorAll('[data-copy]')) {
+    button.addEventListener('click', async () => {
+      const code = button.parentElement.querySelector('code');
+      try { await navigator.clipboard.writeText(code.innerText); } catch { return; }
+      button.textContent = 'copied';
+      setTimeout(() => { button.textContent = 'copy'; }, 1200);
+    });
+  }
+
+  const counters = [...document.querySelectorAll('[data-count]')];
+  const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const run = (el) => {
+    if (el.dataset.done === '1') return;
+    el.dataset.done = '1';
+    const target = Number(el.dataset.count);
+    const decimals = Number(el.dataset.decimals ?? 0);
+    const prefix = el.dataset.prefix ?? '';
+    const suffix = el.dataset.suffix ?? '';
+    if (calm) {
+      el.textContent = prefix + target.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals }) + suffix;
+      return;
+    }
+    const started = performance.now();
+    const step = (now) => {
+      const t = Math.min((now - started) / 900, 1);
+      const value = Math.min(target, target * (1 - Math.pow(1 - t, 3)));
+      el.textContent = prefix + value.toLocaleString('en-US', {
+        minimumFractionDigits: decimals, maximumFractionDigits: decimals,
+      }) + suffix;
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  };
+  if ('IntersectionObserver' in window) {
+    const io = new IntersectionObserver((entries) => {
+      for (const entry of entries) if (entry.isIntersecting) run(entry.target);
+    }, { threshold: 0.2 });
+    counters.forEach((el) => io.observe(el));
+    const reveal = new IntersectionObserver((entries) => {
+      for (const entry of entries) if (entry.isIntersecting) entry.target.classList.add('in');
+    }, { threshold: 0.15 });
+    document.querySelectorAll('.reveal').forEach((el) => reveal.observe(el));
+  } else {
+    counters.forEach(run);
+    document.querySelectorAll('.reveal').forEach((el) => el.classList.add('in'));
+  }
+</script>
+</body>
+</html>
