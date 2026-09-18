@@ -26,7 +26,7 @@
     --surface-dark:#1c1c1c;
     /* illustration palette: five values, flat, no gradients */
     --illus-top:#f5f3f2; --illus-left:#eeecea; --illus-right:#e0dedb; --illus-line:#7f806f; --illus-ink:#1c1c1c;
-    --syntax-key:#366300; --syntax-val:#146ef5; --syntax-str:#4f8a55; --syntax-comment:#737373;
+    --syntax-key:#8a64a8; --syntax-val:#a16a3c; --syntax-str:#4f8a55; --syntax-comment:#737373;
     --nav-h:4rem; --container:90rem; --cell:48rem; --read:41rem;
     --h1-fs:clamp(2rem,4vw,3.5rem); --h-fs:6rem; --h-lh:1.08; --h-ls:-.04em;
     --sec-pad:5.75rem; --sec-pad-sm:3.5rem;
@@ -35,12 +35,13 @@
     --font-display:"SG",ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
     --font-mono:"JBM",ui-monospace,SFMono-Regular,Menlo,monospace;
   }
-  @media (max-width:1024px){:root{--sec-pad:4.5625rem;--sec-pad-sm:2.875rem}}
+  @media (max-width:1024px){:root{--sec-pad:4.5625rem;--sec-pad-sm:2.875rem}
+    .strip--stats{padding-top:32px}}
   @media (max-width:540px){:root{--h1-fs:2.5rem;--h-ls:-.03em;--sec-pad:3.375rem;--sec-pad-sm:2.25rem}}
 
   *{box-sizing:border-box}
   html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
-  body{margin:0;background:var(--bg);color:var(--ink);font:500 1rem/1.5 var(--font-display);letter-spacing:-.01em}
+  body{margin:0;background:var(--bg);color:var(--ink);font:500 1rem/1.5 var(--font-display);letter-spacing:-.01em;overflow-x:clip}
   h1,h2,h3{margin:0;font-weight:500;letter-spacing:var(--h-ls);line-height:var(--h-lh)}
   h1{font-size:var(--h1-fs)}
   h2{font-size:2.5rem;line-height:1.26;letter-spacing:-.04em}
@@ -52,12 +53,41 @@
   .wrap{max-width:var(--container);margin:0 auto;padding:0 2rem}
   .cell{max-width:var(--cell)}
   .read{max-width:var(--read)}
-  .lede{font-size:1.25rem;font-weight:400;line-height:1.2;letter-spacing:-.02em;max-width:var(--read);color:var(--muted)}
+  .lede{font-size:1.25rem;font-weight:400;line-height:1.2;letter-spacing:-.02em;max-width:var(--read);color:var(--muted);margin-bottom:0}
   code,pre{font-family:var(--font-mono)}
   code{font-size:.8125rem;background:var(--bg-white);border:1px solid var(--border-100);border-radius:.25rem;padding:.05rem .3rem}
   pre{margin:0;background:var(--bg-white);border:1px solid var(--border-100);border-radius:.25rem;padding:1rem 1.125rem;overflow-x:auto;font-size:12px;line-height:1.7}
   pre code{background:none;border:0;padding:0;font-size:inherit}
   .k{color:var(--syntax-key)} .v{color:var(--syntax-val)} .s{color:var(--syntax-str)} .c{color:var(--syntax-comment)}
+  .btn{display:inline-flex;align-items:center;gap:.5rem;font-family:var(--font-mono);font-size:1rem;font-weight:500;
+    line-height:1.12;letter-spacing:-.02em;text-transform:uppercase;text-decoration:none;border:1px solid transparent;
+    border-radius:.5rem;padding:.6875rem 1.125rem;cursor:pointer;
+    transition:background-color .18s ease,border-color .18s ease,color .18s ease,opacity .18s ease,transform .12s ease}
+  .btn .arrow{transition:transform .12s ease}
+  .btn:hover .arrow{transform:translate(2px)}
+  .btn:active{transform:scale(.97)}
+  .btn--sm{height:34px;padding:8px 14px;font:500 14px/15.68px var(--font-mono)}
+  .btn--pill{border-radius:.5rem;padding:.75rem 1.125rem .75rem 1.375rem}
+  .btn--accent{background:var(--accent);color:var(--ink)}
+  .btn--accent:hover{background:var(--accent-hover)}
+  .btn--accent:active{background:var(--accent-active)}
+  .btn--dark{background:var(--btn-bg);color:var(--btn-text)}
+  .btn--dark:hover{background:var(--btn-bg-hover)}
+  .btn--dark:active{background:#333}
+  .btn--ghost{background:var(--tint-olive-06)}
+  .btn--ghost:hover{background:var(--tint-olive-12)}
+  .btn--onDark{border-color:var(--illus-line);color:var(--btn-text)}
+  .btn--onDark:hover{background:color-mix(in srgb,#fff 10%,transparent)}
+  .link{font-weight:500;text-decoration:none;border-bottom:1px solid var(--border-100);padding-bottom:1px}
+  .link:hover{border-color:var(--ink)}
+  .pill{display:inline-flex;align-items:center;gap:.4rem;font-family:var(--font-mono);font-size:.6875rem;
+    text-transform:uppercase;letter-spacing:.06em;border-radius:1.5rem;padding:.25rem .625rem;
+    border:1px solid var(--tint-olive-12);background:var(--tint-olive-06);color:var(--ink-soft)}
+  .copy{position:absolute;top:.5rem;right:.5rem;font-family:var(--font-mono);font-size:.6875rem;
+    background:var(--bg);color:var(--muted);border:1px solid var(--border-100);border-radius:.25rem;
+    padding:.2rem .5rem;cursor:pointer;transition:color .12s ease}
+  .copy:hover{color:var(--ink)}
+  .code-wrap{position:relative}
   .rule{border-top:1px solid var(--border-100)}
   .label{font:500 .875rem/1.12 var(--font-mono);letter-spacing:-.02em;color:color-mix(in srgb,var(--ink) 64%,transparent)}
 
@@ -73,81 +103,67 @@
   .nav__logo{font-size:1.125rem;font-weight:500;letter-spacing:-.02em;text-decoration:none}
   .nav__logo i{color:var(--accent);font-style:normal}
   .nav__list{display:flex;align-items:center;gap:1rem;margin:0;padding:0;list-style:none}
-  .nav__item{display:block;font-size:.875rem;letter-spacing:-.02em;text-decoration:none;padding:.4375rem .625rem;
+  .nav__item{display:block;font-size:.875rem;font-weight:500;letter-spacing:-.02em;text-decoration:none;padding:.4375rem .625rem;
     border-radius:.5rem;transition:background-color .15s ease}
   .nav__item:hover{background:var(--tint-ink-04)}
   .nav__actions{margin-left:auto;display:flex;align-items:center;gap:.5rem}
   .nav__burger{display:none;flex-direction:column;justify-content:center;gap:.3125rem;width:2.5rem;height:2.5rem;
     background:0 0;border:0;cursor:pointer;padding:0}
   .nav__burger span{display:block;height:1.5px;width:1.375rem;border-radius:.125rem;background:var(--ink)}
-  @media (max-width:1200px){.nav__list{display:none}.nav__burger{display:flex}}
-
-  .btn{display:inline-flex;align-items:center;gap:.5rem;font-family:var(--font-mono);font-size:1rem;font-weight:500;line-height:1.12;
-    letter-spacing:-.02em;text-transform:uppercase;text-decoration:none;border:1px solid transparent;border-radius:.5rem;
-    padding:.6875rem 1.125rem;cursor:pointer;
-    transition:background-color .18s ease,border-color .18s ease,color .18s ease,opacity .18s ease,transform .12s ease}
-  .btn .arrow{transition:transform .12s ease}
-  .btn:hover .arrow{transform:translate(2px)}
-  .btn:active{transform:scale(.97)}
-  .btn--sm{padding:.4375rem .625rem;font-size:.75rem}
-  .btn--pill{border-radius:1.5rem;padding:.75rem 1.125rem .75rem 1.375rem}
-  .btn--accent{background:var(--accent);color:var(--ink)}
-  .btn--accent:hover{background:var(--accent-hover)}
-  .btn--accent:active{background:var(--accent-active)}
-  .btn--dark{background:var(--btn-bg);color:var(--btn-text)}
-  .btn--dark:hover{background:var(--btn-bg-hover)}
-  .btn--dark:active{background:#333}
-  .btn--ghost{background:var(--tint-olive-06)}
-  .btn--ghost:hover{background:var(--tint-olive-12)}
-  .btn--onDark{border-color:var(--illus-line);color:var(--btn-text)}
-  .btn--onDark:hover{background:color-mix(in srgb,#fff 10%,transparent)}
-  .link{font-weight:500;text-decoration:none;border-bottom:1px solid var(--border-100);padding-bottom:1px}
-  .link:hover{border-color:var(--ink)}
-
-  .copy{position:absolute;top:.5rem;right:.5rem;font-family:var(--font-mono);font-size:.6875rem;
-    background:var(--bg);color:var(--muted);border:1px solid var(--border-100);border-radius:.25rem;
-    padding:.2rem .5rem;cursor:pointer;transition:color .12s ease}
-  .copy:hover{color:var(--ink)}
-  .code-wrap{position:relative}
-
   .hero{display:grid;grid-template-columns:minmax(48rem,1fr) 12rem 1fr;grid-template-rows:auto auto;
-    border-bottom:1px solid var(--border-100)}
-  .hero-heading-cell{grid-column:1;grid-row:1;padding:clamp(7rem,13vh,17.5rem) 2rem 3rem;border-right:1px solid var(--border-100);position:relative}
-  .hero-heading-cell:after{content:"";position:absolute;left:0;right:-100vw;bottom:0;border-top:1px solid var(--border-100)}
+    border-top:1px solid var(--border-100);border-bottom:1px solid var(--border-100)}
+  .hero-heading-cell{grid-column:1;grid-row:1;padding:clamp(7rem,13vh,17.5rem) 2rem 3rem;border-right:1px solid var(--border-100)}
   .hero h1 .dim{color:var(--border)}
-  .hero-body-cell{grid-column:1;grid-row:2;padding:3rem 2rem .5rem;border-right:1px solid var(--border-100);
+  .hero-body-cell{grid-column:1;grid-row:2;padding:3rem 2rem 5rem;border-right:1px solid var(--border-100);
     display:flex;flex-direction:column;gap:1rem}
   .hero-body-cell .row{display:flex;gap:.75rem;flex-wrap:wrap;align-items:center}
   .hero-media{grid-column:2;grid-row:1 / span 2;border-right:1px solid var(--border-100);overflow:hidden;
     position:relative;background:#fbfbfb;border-top:1px solid var(--border-100)}
   .hero-media svg{position:absolute;inset:0;width:100%;height:100%;display:block}
   .hero-trust{grid-column:3;grid-row:2;padding:.5rem 2rem 3rem}
-  .hero-trust .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:.75rem;margin-top:1.5rem}
-  .hero-trust .grid span{display:flex;align-items:center;justify-content:center;min-height:7.25rem;border-radius:.25rem;
-    background:var(--tint-olive-06);font:500 .875rem/1.12 var(--font-mono);letter-spacing:-.02em;
-    color:color-mix(in srgb,var(--ink) 72%,transparent)}
-  @media (max-width:1200px){
-    .hero{grid-template-columns:1fr}
-    .hero-heading-cell{border-right:0;padding:clamp(3.5rem,9vh,7rem) 2rem 1.5rem}
-    .hero-media{display:none}
-    .hero-body-cell{padding:0 2rem 3.5rem;border-right:0}
+  .hero-trust .label{margin-bottom:20px;font:400 .875rem/1.3 var(--font-display);letter-spacing:-.014em;color:var(--muted)}
+  .hero-trust .grid{display:grid;grid-template-columns:repeat(3,128px);gap:16px;margin-top:1.5rem}
+  .hero-trust .grid span{display:flex;align-items:center;justify-content:center;height:6rem;background:none;
+    border-radius:0;font:400 .875rem/1.3 var(--font-display);letter-spacing:-.01em;color:var(--muted)}
+  @media (max-width:1200px){.nav__list{display:none}.nav__burger{display:flex}}
+  @media (max-width:540px){
+    .nav__inner{padding:0 1rem;gap:.75rem}
+    .nav__actions{gap:.375rem}
+    .nav__actions .nav__item,.nav__actions .btn--ghost{display:none}
+    .panel{margin-left:0;max-width:100%}
+  }
+  @media (max-width:1279px){
+    .hero{grid-template-columns:1fr;border-bottom:0}
+    .hero-heading-cell,.hero-body-cell,.hero-trust{grid-column:1;grid-row:auto;border-right:0}
+    .hero-heading-cell{padding:clamp(3.5rem,9vh,7rem) 2rem 1.5rem}
+    .hero-body-cell{padding:0 2rem 3.5rem}
     .hero-trust{padding:1.5rem 2rem 3.5rem}
+    .hero-trust .grid{grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:16px}
+    .hero-media{display:none}
   }
 
-  .panel{background:#fbfbfb;border:0;border-radius:.5rem;overflow:hidden;margin:0 auto;max-width:1158px;
-    box-shadow:0 10px 34px color-mix(in srgb,#1c1c1c 9%,transparent);min-height:51.875rem;
-    display:flex;flex-direction:column}
-  .panel__bar{display:flex;align-items:center;justify-content:center;gap:.75rem;padding:1rem;border-bottom:1px solid var(--border-100)}
+  .panel{position:relative;background:#fbfbfb;border:1px solid rgba(127,128,111,.12);border-radius:0;overflow:hidden;
+    margin-left:54px;width:1160px;max-width:calc(100% - 54px);height:39.25rem;
+    box-shadow:0 1px 4px rgba(127,128,111,.12);display:flex;flex-direction:column}
+  .panel__bar{position:relative;display:flex;align-items:center;justify-content:center;height:38px;padding:0 14px;
+    border-bottom:1px solid var(--tint-olive-12);font:400 12px/18px var(--font-display);color:#7f806f}
+  .panel__dot{width:10px;height:10px;border-radius:50%;background:rgba(127,128,111,.24)}
+  .panel__dots{position:absolute;left:14px;display:flex;gap:7px}
   .panel__pill{background:var(--bg-white);border:1px solid var(--border-100);border-radius:1.5rem;
     padding:.4375rem 1rem;font:500 .875rem/1.12 var(--font-mono);letter-spacing:-.02em;
     color:color-mix(in srgb,var(--ink) 72%,transparent)}
-  .panel__tabs{display:flex;gap:.25rem;justify-content:center;padding:.75rem 1rem;border-bottom:1px solid var(--border-100);
-    font:500 .875rem/1.12 var(--font-mono);letter-spacing:-.02em;color:color-mix(in srgb,var(--ink) 64%,transparent)}
+  .panel__tabs{display:flex;align-items:center;gap:.25rem;justify-content:flex-start;height:32px;padding:0 14px;
+    border-bottom:1px solid var(--tint-olive-12);font:400 12px/18px var(--font-display);color:color-mix(in srgb,var(--ink) 64%,transparent)}
   .panel__tab{border-radius:.25rem;padding:.375rem .625rem}
-  .panel__tab[aria-selected="true"]{background:var(--tint-olive-06);color:var(--ink)}
+  .panel__tab[aria-selected="true"]{background:var(--bg-white);border:1px solid var(--border-100);border-bottom:0;
+    border-radius:.25rem .25rem 0 0;color:var(--ink)}
   .panel__grow{flex:1;display:flex;align-items:center}
   .panel__grow > *{width:100%}
   .panel pre{border:0;border-radius:0;background:transparent;padding:1.75rem;position:relative;z-index:1}
+  .panel__foot{display:flex;flex-wrap:wrap;gap:.5rem 1.5rem;padding:.875rem 1.75rem;
+    border-top:1px solid var(--tint-olive-12);font:500 .875rem/1.12 var(--font-mono);
+    letter-spacing:-.02em;color:var(--muted)}
+  .panel__foot b{color:var(--ink-soft);font-weight:500}
   .panel__float{position:absolute;right:1.5rem;bottom:1.5rem;z-index:2;background:var(--bg-white);
     border:1px solid var(--tint-olive-12);border-radius:.5rem;box-shadow:0 12px 30px color-mix(in srgb,#1c1c1c 12%,transparent);
     padding:.875rem 1rem;font:500 .875rem/1.12 var(--font-mono);letter-spacing:-.02em;color:var(--ink-soft)}
@@ -156,17 +172,16 @@
   @media (max-width:1024px){.panel__grid{grid-template-columns:1fr}.panel__grid > div + div{border-left:0;border-top:1px solid var(--border-100)}}
 
   .strip{overflow:hidden;border-bottom:1px solid var(--border-100);background:var(--bg-100)}
-  .strip--stats{border-top:1px solid var(--border-100);border-bottom:0;background:var(--bg)}
+  .strip--stats{border-top:0;border-bottom:0;background:var(--bg);padding-top:40px}
   .strip--top{border-top:1px solid var(--border-100)}
   .marquee{overflow:hidden}
   .marquee .track{display:flex;width:max-content;animation:marquee 114s linear infinite}
   .marquee:hover .track{animation-play-state:paused}
   @keyframes marquee{0%{transform:translate(0)}to{transform:translate(-50%)}}
-  .stat{display:flex;align-items:baseline;gap:.75rem;padding:1.75rem 2.5rem;min-width:18rem}
-  .stat span{font:500 .875rem/1.12 var(--font-display);letter-spacing:-.02em;
-    color:color-mix(in srgb,var(--ink) 64%,transparent);white-space:nowrap}
-  .stat b{font:500 .875rem/1.12 var(--font-display);letter-spacing:-.02em;font-variant-numeric:tabular-nums;
-    background:var(--tint-olive-06);border-radius:.25rem;padding:.4375rem .5rem;white-space:nowrap;
+  .stat{display:flex;align-items:center;gap:.75rem;padding:0 56px 0 0}
+  .stat span{font:500 .875rem/1.12 var(--font-display);letter-spacing:-.02em;color:var(--ink);opacity:.64;white-space:nowrap}
+  .stat b{font:500 .875rem/1.12 var(--font-mono);letter-spacing:-.02em;font-variant-numeric:tabular-nums;color:var(--ink);
+    background:var(--tint-olive-06);border-radius:.25rem;padding:.4375rem .5rem;line-height:15.68px;white-space:nowrap;
     transition:background-color .2s ease}
   .stat:hover b{background:var(--accent)}
   .logos .track{gap:2.5rem;padding:1.125rem 0;align-items:center;
@@ -174,6 +189,7 @@
   .logos .track span{margin:0 1.25rem;white-space:nowrap}
 
   section{background:var(--bg)}
+  #proof .wrap{padding-block:2rem}
   .pad{padding-block:var(--sec-pad)}
   .pad-tight{padding-block:var(--sec-pad-sm)}
   .split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:3rem;align-items:start}
@@ -183,17 +199,16 @@
   .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem}
   @media (max-width:1024px){.cards{grid-template-columns:repeat(2,1fr)}}
   @media (max-width:540px){.cards{grid-template-columns:1fr}}
-  .card{background:var(--bg-white);border:0;border-radius:.25rem;padding:1.5rem;min-height:33.75rem;
+  .card{background:var(--tint-olive-08);border:0;border-radius:.25rem;padding:1.5rem;min-height:33.75rem;
     display:flex;flex-direction:column;gap:1rem;transition:background-color .5s,box-shadow .5s}
   @media (max-width:1024px){.card{min-height:30.5rem;padding:1.375rem}}
   @media (max-width:540px){.card{min-height:30rem;padding:1.25rem}}
   .card .idx{display:flex;align-items:center;justify-content:space-between;gap:1rem;
     font:500 .875rem/1.12 var(--font-mono);letter-spacing:-.02em;
     color:color-mix(in srgb,var(--ink) 32%,transparent)}
-  .card .art{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:1rem;
-    background:var(--tint-olive-08);border-radius:.25rem}
+  .card .art{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:1rem 0}
   .card .art svg{width:100%;height:auto;max-height:16rem}
-  .card h3{font-size:1.5rem;font-weight:500;letter-spacing:-.02em;line-height:1.2}
+  .card h3{font-size:1.5rem;font-weight:500;letter-spacing:-.04em;line-height:1.32}
   .card p{color:color-mix(in srgb,var(--ink) 64%,transparent);font-size:1rem;font-weight:400;line-height:1.48;margin:0}
   .card .foot{margin-top:auto;padding-top:1rem;border-top:1px solid var(--border-100);
     font:500 .875rem/1.12 var(--font-mono);letter-spacing:-.02em;color:color-mix(in srgb,var(--ink) 64%,transparent)}
@@ -221,7 +236,7 @@
   ul.facts li{margin-bottom:.5rem}
 
   .cta{background:var(--bg);color:var(--ink);min-height:35.25rem;padding-block:4rem;text-align:center;
-    display:flex;align-items:center;justify-content:center;border-bottom:1px solid var(--border-100)}
+    display:flex;align-items:center;justify-content:center;border-top:1px solid var(--border-100)}
   .cta .wrap{width:100%}
   .cta h2{font-size:var(--h-fs);letter-spacing:-.04em;font-weight:500;line-height:1.08;margin:0 auto;max-width:80rem}
   .cta p{color:var(--muted);margin-left:auto;margin-right:auto}
@@ -229,11 +244,12 @@
   @media (max-width:1024px){.cta{min-height:0}}
 
   footer{background:var(--surface-dark);color:var(--btn-text);font-size:.875rem}
-  footer .wrap{display:grid;grid-template-columns:25.125rem 1fr;gap:0;padding:4rem 2rem 4rem 0}
+  footer .wrap{display:grid;grid-template-columns:25.125rem 1fr;gap:0;padding:4rem 2rem 4rem 32px}
+  @media (max-width:540px){footer .wrap{padding-left:28px}}
   footer .brand{color:var(--btn-text);font-size:1.125rem;font-weight:500;letter-spacing:-.02em}
   footer nav{display:grid;grid-template-columns:repeat(6,1fr);gap:1.5rem;padding-left:2rem;
     border-left:1px solid color-mix(in srgb,#f5f3f2 8%,transparent)}
-  footer a{text-decoration:none;display:block;margin-bottom:.5rem;color:var(--btn-text);
+  footer a{text-decoration:none;display:block;margin-bottom:.5rem;font:400 1rem/1.5 var(--font-display);color:var(--btn-text);
     transition:color .15s cubic-bezier(.23,1,.32,1)}
   footer a:hover{color:var(--accent)}
   footer .head{color:color-mix(in srgb,var(--btn-text) 64%,transparent);margin-bottom:.75rem;
@@ -336,29 +352,48 @@
   <div class="wrap pad">
     <div class="panel">
       <div class="panel__bar">
-        <span class="panel__dot"></span><span class="panel__dot"></span><span class="panel__dot"></span>
-        <span style="margin-left:.75rem">bun run bench/bench.ts --rows 20000</span>
+        <span class="panel__dots"><span class="panel__dot"></span><span class="panel__dot"></span><span class="panel__dot"></span></span>
+        bun run bench/bench.ts --rows 1000,5000,20000
       </div>
       <div class="panel__tabs"><span class="panel__tab" aria-selected="true">bench</span><span class="panel__tab">schema</span><span class="panel__tab">worker</span><span class="panel__tab">stats</span></div>
       <div class="panel__grid">
         <div>
-          <pre><code>rows=20000 cold=1621.74ms warm=238.87ms
-     indexed=0.07ms scanned=26.78ms matches=4000
-     writes=20001 exec=192 maxStmt=760B
+          <pre><code>rows=1000   cold=140.71ms warm=39.66ms
+            indexed=&lt;0.01ms  scanned=0.61ms   matches=200
+rows=5000   cold=223.28ms warm=49.36ms
+            indexed=0.02ms   scanned=3.61ms   matches=1000
+rows=20000  cold=1621.74ms warm=238.87ms
+            indexed=0.07ms   scanned=26.78ms  matches=4000
+
+writes=20001  exec=192  maxStmt=760B
 
 <span class="c"># second run: 0 API calls, judgments reused</span>
-<span class="c"># tag(): 20,000 rows written in 192 exec() calls</span></code></pre>
+<span class="c"># tag(): 20,000 rows written in 192 exec() calls</span>
+<span class="c"># real D1: 300 rows -> 10 UPDATE statements at 33 rows each</span>
+<span class="c"># live model: 200 rows, 5 requests, 20,114 tokens, $0.0008</span>
+<span class="c"># a changed row re-judges itself; nothing else does</span></code></pre>
         </div>
         <div>
-          <pre><code><span class="k">await</span> jev.tag(<span class="s">'people'</span>, <span class="s">'the name is European'</span>);
-
+          <pre><code><span class="c">-- your query, rewritten by the engine</span>
 <span class="k">SELECT</span> * <span class="k">FROM</span> people
-<span class="k">WHERE</span> jev_the_name_is_european = <span class="v">1</span>;
+<span class="k">WHERE</span> (COALESCE((
+  <span class="k">SELECT</span> j.prob <span class="k">FROM</span> jev_judgments j
+  <span class="k">WHERE</span> j.scope = <span class="s">'people'</span>
+    <span class="k">AND</span> j.row_ref = CAST(<span class="s">"people"._rowid_</span> <span class="k">AS</span> TEXT)
+    <span class="k">AND</span> j.judgment_key = <span class="s">'noul…the name is European…'</span>), -1.0)
+  &gt;= COALESCE(0.5, 0.5));
 
-<span class="c">-- real D1: SEARCH people USING COVERING INDEX</span>
-<span class="c">-- 20,000 rows: 0.07 ms vs 26.78 ms through jev()</span></code></pre>
+<span class="c">-- or tag it once and drop the rewriter entirely</span>
+<span class="k">await</span> jev.tag(<span class="s">'people'</span>, <span class="s">'the name is European'</span>);
+<span class="k">SELECT</span> * <span class="k">FROM</span> people <span class="k">WHERE</span> jev_the_name_is_european = <span class="v">1</span>;
+
+<span class="c">-- real D1: SEARCH people USING COVERING INDEX people_jev_is_german_idx</span>
+<span class="c">-- jev_judgments: keyed by row + condition + format + model</span>
+<span class="c">-- 191 tests, 0 fail · mock model, no credentials needed</span></code></pre>
         </div>
       </div>
+      <div class="panel__foot"><span><b>jev_judgments</b> 14 columns · keyed by row + condition + format + model</span><span><b>jev_runs</b> one row per batch request · tokens, cost, errors</span><span><b>views</b> jev_stats · jev_cached · jev_coverage · jev_meta</span></div>
+      <div class="panel__float">0 API calls on the second run</div>
     </div>
   </div>
 </section>
@@ -417,8 +452,8 @@
       <article class="card reveal">
         <div class="idx"><span>01 / read</span><span>40 rows</span></div>
         <div class="art">
-          <svg viewBox="0 0 288 190" role="img" aria-label="Isometric rows packed into a batch">
-<path class="iso-draw" pathLength="1" d="M36 120 L72 141 L180 78 L216 99" fill="none" stroke="#7f806f" stroke-width="1.25"/><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M180 52 L216 73 L72 157 L36 136 Z" fill="#f5f3f2"/><path data-face="left" d="M36 136 L72 157 L72 165 L36 144 Z" fill="#eeecea"/><path data-face="right" d="M72 157 L216 73 L216 81 L72 165 Z" fill="#e0dedb"/></g><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M180 44 L216 65 L180 86 L144 65 Z" fill="#f5f3f2"/><path data-face="left" d="M144 65 L180 86 L180 94 L144 73 Z" fill="#eeecea"/><path data-face="right" d="M180 86 L216 65 L216 73 L180 94 Z" fill="#e0dedb"/></g><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M144 65 L180 86 L144 107 L108 86 Z" fill="#f5f3f2"/><path data-face="left" d="M108 86 L144 107 L144 115 L108 94 Z" fill="#eeecea"/><path data-face="right" d="M144 107 L180 86 L180 94 L144 115 Z" fill="#e0dedb"/></g><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M108 86 L144 107 L108 128 L72 107 Z" fill="#f5f3f2"/><path data-face="left" d="M72 107 L108 128 L108 136 L72 115 Z" fill="#eeecea"/><path data-face="right" d="M108 128 L144 107 L144 115 L108 136 Z" fill="#e0dedb"/></g><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M72 107 L108 128 L72 149 L36 128 Z" fill="#f5f3f2"/><path data-face="left" d="M36 128 L72 149 L72 157 L36 136 Z" fill="#eeecea"/><path data-face="right" d="M72 149 L108 128 L108 136 L72 157 Z" fill="#e0dedb"/></g><g data-solid="" data-height="8" stroke="#1c1c1c" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M108 78 L144 99 L108 120 L72 99 Z" fill="#87f700"/><path data-face="left" d="M72 99 L108 120 L108 128 L72 107 Z" fill="#79e000"/><path data-face="right" d="M108 120 L144 99 L144 107 L108 128 Z" fill="#6fce00"/></g>
+          <svg viewBox="0 0 288 190" role="img" aria-label="Eight relation rows read once; four collected in one raised batch tray">
+<g data-solid="relation" data-height="7" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="91,76 206.2,143.2 148.6,176.8 33.4,109.6" fill="#f5f3f2"/><polygon data-face="left" points="33.4,109.6 148.6,176.8 148.6,183.8 33.4,116.6" fill="#eeecea"/><polygon data-face="right" points="148.6,176.8 206.2,143.2 206.2,150.2 148.6,183.8" fill="#e0dedb"/></g><g data-solid="source-row" data-height="4" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="91,72 116.92,87.12 91,102.24 65.08,87.12" fill="#f5f3f2"/><polygon data-face="left" points="65.08,87.12 91,102.24 91,106.24 65.08,91.12" fill="#eeecea"/><polygon data-face="right" points="91,102.24 116.92,87.12 116.92,91.12 91,106.24" fill="#e0dedb"/></g><g data-solid="source-row" data-height="4" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="62.2,88.8 88.12,103.92 62.2,119.04 36.28,103.92" fill="#f5f3f2"/><polygon data-face="left" points="36.28,103.92 62.2,119.04 62.2,123.04 36.28,107.92" fill="#eeecea"/><polygon data-face="right" points="62.2,119.04 88.12,103.92 88.12,107.92 62.2,123.04" fill="#e0dedb"/></g><g data-solid="source-row" data-height="4" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="119.8,88.8 145.72,103.92 119.8,119.04 93.88,103.92" fill="#f5f3f2"/><polygon data-face="left" points="93.88,103.92 119.8,119.04 119.8,123.04 93.88,107.92" fill="#eeecea"/><polygon data-face="right" points="119.8,119.04 145.72,103.92 145.72,107.92 119.8,123.04" fill="#e0dedb"/></g><g data-solid="source-row" data-height="4" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="91,105.6 116.92,120.72 91,135.84 65.08,120.72" fill="#f5f3f2"/><polygon data-face="left" points="65.08,120.72 91,135.84 91,139.84 65.08,124.72" fill="#eeecea"/><polygon data-face="right" points="91,135.84 116.92,120.72 116.92,124.72 91,139.84" fill="#e0dedb"/></g><g data-solid="source-row" data-height="4" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="148.6,105.6 174.52,120.72 148.6,135.84 122.68,120.72" fill="#f5f3f2"/><polygon data-face="left" points="122.68,120.72 148.6,135.84 148.6,139.84 122.68,124.72" fill="#eeecea"/><polygon data-face="right" points="148.6,135.84 174.52,120.72 174.52,124.72 148.6,139.84" fill="#e0dedb"/></g><g data-solid="source-row" data-height="4" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="119.8,122.4 145.72,137.52 119.8,152.64 93.88,137.52" fill="#f5f3f2"/><polygon data-face="left" points="93.88,137.52 119.8,152.64 119.8,156.64 93.88,141.52" fill="#eeecea"/><polygon data-face="right" points="119.8,152.64 145.72,137.52 145.72,141.52 119.8,156.64" fill="#e0dedb"/></g><g data-solid="source-row" data-height="4" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="177.4,122.4 203.32,137.52 177.4,152.64 151.48,137.52" fill="#f5f3f2"/><polygon data-face="left" points="151.48,137.52 177.4,152.64 177.4,156.64 151.48,141.52" fill="#eeecea"/><polygon data-face="right" points="177.4,152.64 203.32,137.52 203.32,141.52 177.4,156.64" fill="#e0dedb"/></g><g data-solid="source-row" data-height="4" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="148.6,139.2 174.52,154.32 148.6,169.44 122.68,154.32" fill="#f5f3f2"/><polygon data-face="left" points="122.68,154.32 148.6,169.44 148.6,173.44 122.68,158.32" fill="#eeecea"/><polygon data-face="right" points="148.6,169.44 174.52,154.32 174.52,158.32 148.6,173.44" fill="#e0dedb"/></g><g data-solid="batch-tray" data-height="7" stroke="#1c1c1c" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="185,15 239,46.5 185,78 131,46.5" fill="#87f700"/><polygon data-face="left" points="131,46.5 185,78 185,85 131,53.5" fill="#79e000"/><polygon data-face="right" points="185,78 239,46.5 239,53.5 185,85" fill="#6fce00"/></g><g data-solid="batched-row" data-height="2" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="185,13 206.6,25.6 185,38.2 163.4,25.6" fill="#f5f3f2"/><polygon data-face="left" points="163.4,25.6 185,38.2 185,40.2 163.4,27.6" fill="#eeecea"/><polygon data-face="right" points="185,38.2 206.6,25.6 206.6,27.6 185,40.2" fill="#e0dedb"/></g><g data-solid="batched-row" data-height="2" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="159.8,27.7 181.4,40.3 159.8,52.9 138.2,40.3" fill="#f5f3f2"/><polygon data-face="left" points="138.2,40.3 159.8,52.9 159.8,54.9 138.2,42.3" fill="#eeecea"/><polygon data-face="right" points="159.8,52.9 181.4,40.3 181.4,42.3 159.8,54.9" fill="#e0dedb"/></g><g data-solid="batched-row" data-height="2" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="210.2,27.7 231.8,40.3 210.2,52.9 188.6,40.3" fill="#f5f3f2"/><polygon data-face="left" points="188.6,40.3 210.2,52.9 210.2,54.9 188.6,42.3" fill="#eeecea"/><polygon data-face="right" points="210.2,52.9 231.8,40.3 231.8,42.3 210.2,54.9" fill="#e0dedb"/></g><g data-solid="batched-row" data-height="2" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="185,42.4 206.6,55 185,67.6 163.4,55" fill="#f5f3f2"/><polygon data-face="left" points="163.4,55 185,67.6 185,69.6 163.4,57" fill="#eeecea"/><polygon data-face="right" points="185,67.6 206.6,55 206.6,57 185,69.6" fill="#e0dedb"/></g><path data-arrow="" d="M185 137 V85 M176 90.25 L185 85 L194 90.25" fill="none" stroke="#1c1c1c" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
         </div>
         <h3>Read ahead, then batch</h3>
@@ -429,8 +464,8 @@
       <article class="card reveal">
         <div class="idx"><span>02 / judge</span><span>one state</span></div>
         <div class="art">
-          <svg viewBox="0 0 288 190" role="img" aria-label="Isometric judgments table, one row per judged record">
-<g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M144 35 L216 77 L108 140 L36 98 Z" fill="#f5f3f2"/><path data-face="left" d="M36 98 L108 140 L108 148 L36 106 Z" fill="#eeecea"/><path data-face="right" d="M108 140 L216 77 L216 85 L108 148 Z" fill="#e0dedb"/></g><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M144 27 L216 69 L180 90 L108 48 Z" fill="#f5f3f2"/><path data-face="left" d="M108 48 L180 90 L180 98 L108 56 Z" fill="#eeecea"/><path data-face="right" d="M180 90 L216 69 L216 77 L180 98 Z" fill="#e0dedb"/></g><g data-key="" fill="none" stroke="#1c1c1c" stroke-width="1.25"><circle cx="135" cy="48" r="4"/><path d="M135 48 L171 69 M171 69 V63 M162 63.75 V57.75"/></g><g data-solid="" data-height="8" stroke="#1c1c1c" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M108 48 L180 90 L144 111 L72 69 Z" fill="#87f700"/><path data-face="left" d="M72 69 L144 111 L144 119 L72 77 Z" fill="#79e000"/><path data-face="right" d="M144 111 L180 90 L180 98 L144 119 Z" fill="#6fce00"/></g><g data-key="" fill="none" stroke="#1c1c1c" stroke-width="1.25"><circle cx="99" cy="69" r="4"/><path d="M99 69 L135 90 M135 90 V84 M126 84.75 V78.75"/></g><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M72 69 L144 111 L108 132 L36 90 Z" fill="#f5f3f2"/><path data-face="left" d="M36 90 L108 132 L108 140 L36 98 Z" fill="#eeecea"/><path data-face="right" d="M108 132 L144 111 L144 119 L108 140 Z" fill="#e0dedb"/></g><g data-key="" fill="none" stroke="#1c1c1c" stroke-width="1.25"><circle cx="63" cy="90" r="4"/><path d="M63 90 L99 111 M99 111 V105 M90 105.75 V99.75"/></g><text x="24" y="174" font-family="JBM,monospace" font-size="12" fill="#7f806f">row + condition + model</text>
+          <svg viewBox="0 0 288 190" role="img" aria-label="Three stored rows with round, slot, and square key notches">
+<g data-solid="store" data-height="7" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="144,33 241.2,89.7 144,146.4 46.8,89.7" fill="#f5f3f2"/><polygon data-face="left" points="46.8,89.7 144,146.4 144,153.4 46.8,96.7" fill="#eeecea"/><polygon data-face="right" points="144,146.4 241.2,89.7 241.2,96.7 144,153.4" fill="#e0dedb"/></g><g data-solid="stored-row" data-height="5" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="170.64,47.06 236.16,85.28 208.8,101.24 143.28,63.02" fill="#f5f3f2"/><polygon data-face="left" points="143.28,63.02 208.8,101.24 208.8,106.24 143.28,68.02" fill="#eeecea"/><polygon data-face="right" points="208.8,101.24 236.16,85.28 236.16,90.28 208.8,106.24" fill="#e0dedb"/></g><g data-solid="key-plate" data-height="8" stroke="#1c1c1c" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="141.84,30.26 167.04,44.96 150.84,54.41 125.64,39.71" fill="#87f700"/><polygon data-face="left" points="125.64,39.71 150.84,54.41 150.84,62.41 125.64,47.71" fill="#79e000"/><polygon data-face="right" points="150.84,54.41 167.04,44.96 167.04,52.96 150.84,62.41" fill="#6fce00"/></g><circle data-cutout="round" cx="138.24" cy="51.06" r="2.6" fill="#1c1c1c"/><g data-solid="stored-row" data-height="5" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="139.68,65.12 205.2,103.34 177.84,119.3 112.32,81.08" fill="#f5f3f2"/><polygon data-face="left" points="112.32,81.08 177.84,119.3 177.84,124.3 112.32,86.08" fill="#eeecea"/><polygon data-face="right" points="177.84,119.3 205.2,103.34 205.2,108.34 177.84,124.3" fill="#e0dedb"/></g><g data-solid="key-plate" data-height="8" stroke="#1c1c1c" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="110.88,48.32 136.08,63.02 119.88,72.47 94.68,57.77" fill="#87f700"/><polygon data-face="left" points="94.68,57.77 119.88,72.47 119.88,80.47 94.68,65.77" fill="#79e000"/><polygon data-face="right" points="119.88,72.47 136.08,63.02 136.08,71.02 119.88,80.47" fill="#6fce00"/></g><path data-cutout="slot" d="M102.27999999999999 65.20333333333333 l10 5.833333333333333 v2 l-10 -5.833333333333333 Z" fill="#1c1c1c"/><g data-solid="stored-row" data-height="5" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="108.72,83.18 174.24,121.4 146.88,137.36 81.36,99.14" fill="#f5f3f2"/><polygon data-face="left" points="81.36,99.14 146.88,137.36 146.88,142.36 81.36,104.14" fill="#eeecea"/><polygon data-face="right" points="146.88,137.36 174.24,121.4 174.24,126.4 146.88,142.36" fill="#e0dedb"/></g><g data-solid="key-plate" data-height="8" stroke="#1c1c1c" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="79.92,66.38 105.12,81.08 88.92,90.53 63.72,75.83" fill="#87f700"/><polygon data-face="left" points="63.72,75.83 88.92,90.53 88.92,98.53 63.72,83.83" fill="#79e000"/><polygon data-face="right" points="88.92,90.53 105.12,81.08 105.12,89.08 88.92,98.53" fill="#6fce00"/></g><path data-cutout="square" d="M73.82 83.22166666666666 l5 2.9166666666666665 v5 l-5 -2.9166666666666665 Z" fill="#1c1c1c"/><text x="144" y="174" text-anchor="middle" font-family="JBM,monospace" font-size="12" fill="#7f806f">row + condition + model</text>
 </svg>
         </div>
         <h3>Store it in <code>jev_judgments</code></h3>
@@ -441,8 +476,8 @@
       <article class="card reveal">
         <div class="idx"><span>03 / read back</span><span>indexed</span></div>
         <div class="art">
-          <svg viewBox="0 0 288 190" role="img" aria-label="Isometric indexed column: one lattice lookup instead of a scan">
-<g data-solid="" data-height="50" stroke="#1c1c1c" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M144 24 L180 45 L144 66 L108 45 Z" fill="#87f700"/><path data-face="left" d="M108 45 L144 66 L144 116 L108 95 Z" fill="#79e000"/><path data-face="right" d="M144 66 L180 45 L180 95 L144 116 Z" fill="#6fce00"/></g><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M72 66 L108 87 L72 108 L36 87 Z" fill="#f5f3f2"/><path data-face="left" d="M36 87 L72 108 L72 116 L36 95 Z" fill="#eeecea"/><path data-face="right" d="M72 108 L108 87 L108 95 L72 116 Z" fill="#e0dedb"/></g><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M108 87 L144 108 L108 129 L72 108 Z" fill="#f5f3f2"/><path data-face="left" d="M72 108 L108 129 L108 137 L72 116 Z" fill="#eeecea"/><path data-face="right" d="M108 129 L144 108 L144 116 L108 137 Z" fill="#e0dedb"/></g><g data-solid="" data-height="8" stroke="#7f806f" stroke-width="1.25" stroke-linejoin="round"><path data-face="top" d="M180 87 L216 108 L180 129 L144 108 Z" fill="#f5f3f2"/><path data-face="left" d="M144 108 L180 129 L180 137 L144 116 Z" fill="#eeecea"/><path data-face="right" d="M180 129 L216 108 L216 116 L180 137 Z" fill="#e0dedb"/></g><path class="iso-draw" pathLength="1" d="M36 66 L108 24" fill="none" stroke="#7f806f" stroke-width="1.25"/>
+          <svg viewBox="0 0 288 190" role="img" aria-label="A three by three table with its last column filled with tags and indexed">
+<g data-solid="table" data-height="7" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="125,31 222.2,87.7 125,144.4 27.8,87.7" fill="#f5f3f2"/><polygon data-face="left" points="27.8,87.7 125,144.4 125,151.4 27.8,94.7" fill="#eeecea"/><polygon data-face="right" points="125,144.4 222.2,87.7 222.2,94.7 125,151.4" fill="#e0dedb"/></g><g data-solid="cell" data-height="4" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="125,27 154.88,44.43 125,61.86 95.12,44.43" fill="#f5f3f2"/><polygon data-face="left" points="95.12,44.43 125,61.86 125,65.86 95.12,48.43" fill="#eeecea"/><polygon data-face="right" points="125,61.86 154.88,44.43 154.88,48.43 125,65.86" fill="#e0dedb"/></g><g data-solid="cell" data-height="4" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="92.6,45.9 122.48,63.33 92.6,80.76 62.72,63.33" fill="#f5f3f2"/><polygon data-face="left" points="62.72,63.33 92.6,80.76 92.6,84.76 62.72,67.33" fill="#eeecea"/><polygon data-face="right" points="92.6,80.76 122.48,63.33 122.48,67.33 92.6,84.76" fill="#e0dedb"/></g><g data-solid="cell" data-height="4" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="157.4,45.9 187.28,63.33 157.4,80.76 127.52,63.33" fill="#f5f3f2"/><polygon data-face="left" points="127.52,63.33 157.4,80.76 157.4,84.76 127.52,67.33" fill="#eeecea"/><polygon data-face="right" points="157.4,80.76 187.28,63.33 187.28,67.33 157.4,84.76" fill="#e0dedb"/></g><g data-solid="cell" data-height="4" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="60.2,64.8 90.08,82.23 60.2,99.66 30.32,82.23" fill="#f5f3f2"/><polygon data-face="left" points="30.32,82.23 60.2,99.66 60.2,103.66 30.32,86.23" fill="#eeecea"/><polygon data-face="right" points="60.2,99.66 90.08,82.23 90.08,86.23 60.2,103.66" fill="#e0dedb"/></g><g data-solid="cell" data-height="4" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="125,64.8 154.88,82.23 125,99.66 95.12,82.23" fill="#f5f3f2"/><polygon data-face="left" points="95.12,82.23 125,99.66 125,103.66 95.12,86.23" fill="#eeecea"/><polygon data-face="right" points="125,99.66 154.88,82.23 154.88,86.23 125,103.66" fill="#e0dedb"/></g><g data-solid="tag" data-height="4" stroke="#1c1c1c" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="189.8,64.8 219.68,82.23 189.8,99.66 159.92,82.23" fill="#87f700"/><polygon data-face="left" points="159.92,82.23 189.8,99.66 189.8,103.66 159.92,86.23" fill="#79e000"/><polygon data-face="right" points="189.8,99.66 219.68,82.23 219.68,86.23 189.8,103.66" fill="#6fce00"/></g><g data-solid="cell" data-height="4" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="92.6,83.7 122.48,101.13 92.6,118.56 62.72,101.13" fill="#f5f3f2"/><polygon data-face="left" points="62.72,101.13 92.6,118.56 92.6,122.56 62.72,105.13" fill="#eeecea"/><polygon data-face="right" points="92.6,118.56 122.48,101.13 122.48,105.13 92.6,122.56" fill="#e0dedb"/></g><g data-solid="tag" data-height="4" stroke="#1c1c1c" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="157.4,83.7 187.28,101.13 157.4,118.56 127.52,101.13" fill="#87f700"/><polygon data-face="left" points="127.52,101.13 157.4,118.56 157.4,122.56 127.52,105.13" fill="#79e000"/><polygon data-face="right" points="157.4,118.56 187.28,101.13 187.28,105.13 157.4,122.56" fill="#6fce00"/></g><g data-solid="tag" data-height="4" stroke="#1c1c1c" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="125,102.6 154.88,120.03 125,137.46 95.12,120.03" fill="#87f700"/><polygon data-face="left" points="95.12,120.03 125,137.46 125,141.46 95.12,124.03" fill="#79e000"/><polygon data-face="right" points="125,137.46 154.88,120.03 154.88,124.03 125,141.46" fill="#6fce00"/></g><g data-solid="index-wedge" data-height="7" stroke="#7f806f" stroke-width="1" stroke-linejoin="round"><polygon data-face="top" points="232,108 268,108 250,118.5" fill="#f5f3f2"/><polygon data-face="left" points="232,108 250,118.5 250,125.5 232,115" fill="#eeecea"/><polygon data-face="right" points="250,118.5 268,108 268,115 250,125.5" fill="#e0dedb"/></g><path data-arrow="" d="M250 108 L202 80 M202 87 L202 80 L214 80" fill="none" stroke="#1c1c1c" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
         </div>
         <h3>Or tag it into a column</h3>
