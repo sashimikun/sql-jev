@@ -1,17 +1,39 @@
 name: Release
 
+# Two ways in:
+#   1. push a tag:        git tag v0.2.1 && git push origin v0.2.1
+#   2. click a button:    Actions -> Release -> Run workflow -> patch | minor | major
+#
+# Either way: typecheck, tests, build, verify the version, publish with provenance, write the notes.
+# Publishing uses npm trusted publishing (OIDC) when no NPM_TOKEN secret exists, and the token when
+# one does. See CONTRIBUTING.md ("Releasing") for the one-time setup of each.
+
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump for this release
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+        required: true
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-  npm:
+  release:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -25,30 +47,57 @@ jobs:
       # Trusted publishing (OIDC) needs npm >= 11.5.1; Node 20 ships npm 10.
       - run: npm install -g npm@latest
 
+      - name: Bump the version, commit and tag
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          npm version "${{ inputs.bump }}" -m "release %s"
+          git push --follow-tags
+          # Pushes made with GITHUB_TOKEN do not trigger another workflow run, so the tag this step
+          # creates cannot start a second release; this job publishes it below.
+
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun test
       - run: bun run build
 
-      - name: Check the tag matches package.json
+      - name: Resolve the version and refuse a duplicate release
+        id: check
         run: |
-          version=${GITHUB_REF_NAME#v}
-          pkg=$(node -p "require('./package.json').version")
-          test "$version" = "$pkg" || { echo "tag $version != package.json $pkg"; exit 1; }
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            tag="${GITHUB_REF_NAME#v}"
+            test "$tag" = "$version" || { echo "::error::tag $tag does not match package.json $version"; exit 1; }
+          fi
+          if npm view "sql-jev@$version" version >/dev/null 2>&1; then
+            echo "already published: sql-jev@$version"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
 
-      # Preferred: configure a Trusted Publisher for this repo + release.yml on npmjs.com and set no
-      # secret at all. npm exchanges the workflow's OIDC token for a short-lived credential.
+      # Preferred: configure a Trusted Publisher for this repo + release.yml on npmjs.com and keep no
+      # secret at all. npm exchanges this workflow's OIDC token for a short-lived credential.
       - name: Publish with trusted publishing (no stored token)
-        if: ${{ secrets.NPM_TOKEN == '' }}
+        if: steps.check.outputs.publish == 'true' && secrets.NPM_TOKEN == ''
         run: npm publish --provenance --access public
 
       # Fallback: a granular access token with "Bypass two-factor authentication" saved as NPM_TOKEN.
       - name: Publish with NPM_TOKEN
-        if: ${{ secrets.NPM_TOKEN != '' }}
+        if: steps.check.outputs.publish == 'true' && secrets.NPM_TOKEN != ''
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - uses: softprops/action-gh-release@v2
+      - name: Write the GitHub release notes
+        if: steps.check.outputs.publish == 'true'
+        uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.check.outputs.version }}
           generate_release_notes: true
+
+      - name: Nothing to do
+        if: steps.check.outputs.publish == 'false'
+        run: echo "::notice::sql-jev@${{ steps.check.outputs.version }} is already on npm; nothing published."

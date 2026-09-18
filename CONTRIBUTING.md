@@ -63,3 +63,38 @@ bunx tsc --noEmit --strict --target es2022 --module esnext \
 ```
 
 Then say what you verified, and which platform limits you checked against.
+
+## Releasing
+
+Two ways, both run typecheck, the suite, the build, a version check, `npm publish --provenance` and the
+GitHub release notes:
+
+```bash
+# 1. from a terminal
+git tag v0.2.1 && git push origin v0.2.1
+
+# 2. from the browser: Actions -> Release -> Run workflow -> patch | minor | major
+```
+
+The tag must match `package.json`; the second flow bumps it for you, commits, tags and pushes. A tag
+pushed by that workflow cannot start a second release (pushes made with `GITHUB_TOKEN` never trigger
+workflows), so a release publishes exactly once.
+
+### Publishing credentials, once
+
+**Trusted publishing (preferred, nothing to rotate).** On npmjs.com, open the package, then
+*Settings -> Trusted Publisher -> GitHub Actions* and enter this repository (`sashimikun/sql-jev`) and
+the workflow filename `release.yml`. The workflow then publishes with a short-lived OIDC credential.
+A trusted publisher can only be attached to a package that already exists, so the very first release
+has to go out with a token or a local `npm publish`.
+
+**Granular token (bridge for the first release, or if you prefer a secret).** npmjs.com -> *Access
+Tokens -> Generate New Token -> Granular*: *All packages*, *Read and write*, and tick **Bypass
+two-factor authentication**. Then:
+
+```bash
+gh secret set NPM_TOKEN -R sashimikun/sql-jev     # paste the token; it never touches a shell history
+```
+
+The workflow uses the token when `NPM_TOKEN` exists and falls back to OIDC when it does not, so you can
+drop the secret the moment trusted publishing is configured. Tokens expire; OIDC does not.
