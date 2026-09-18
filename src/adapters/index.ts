@@ -1,7 +1,9 @@
 export {
   isSelect,
+  returnsRows,
   rowObjects,
   splitStatements,
+  statementVerb,
   type Adapter,
   type AdapterCapabilities,
   type Statement,

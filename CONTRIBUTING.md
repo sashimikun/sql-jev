@@ -38,10 +38,10 @@ command.
 
 ## Platform limits are contracts
 
-Cloudflare D1 allows 100 bound parameters per statement, ~100 KB per SQL string, 1000 queries per
-Worker invocation, and no user-defined functions. Turso Cloud has no `create_function` and
-rejects `TEMP` tables. `test/d1.test.ts` runs against a fake binding that enforces those limits;
-keep it that way rather than asserting on behaviour that only works locally.
+Cloudflare D1 allows 100 bound parameters per statement, ~100 KB per SQL string, 1,000 queries
+per Worker invocation on Paid (50 on Free), and no user-defined functions. Turso Cloud has no
+`create_function` and rejects `TEMP` tables. `test/d1.test.ts` runs against a fake binding that
+enforces those limits; keep it that way rather than asserting on behaviour that only works locally.
 
 ## Before opening a pull request
 

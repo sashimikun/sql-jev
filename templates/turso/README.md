@@ -76,18 +76,21 @@ So on Turso:
 - The **rewriter is the only path**: `jev.query(sql)` warms the judgments, rewrites every
   `jev(<relation>, '<condition>')` into a correlated `jev_judgments` lookup, and runs the
   rewritten statement. `jev.translate(sql)` gives you that rewritten SQL on its own.
-- UDFs work on engines that expose one -- `bun:sqlite`, `node:sqlite`, `better-sqlite3`,
-  embedded libSQL -- which is exactly why both paths exist.
+- UDFs work only on engines that expose one: `node:sqlite` and `better-sqlite3`. The
+  JavaScript `@libsql/client` has no `create_function`/`createFunction` at all -- not for a
+  local `file:` database, not for an embedded replica, not for Turso Cloud -- and
+  `bun:sqlite` 1.4 has no `function()` API either, so `registerUdfs()` returns `false`
+  there too. That is exactly why both paths exist.
 
 ## Limits to keep in mind
 
 | Limit | Value | Notes |
 | --- | --- | --- |
-| Bound parameters per statement | 32766 | far above D1's 100; the libSQL adapter batches `write` statements |
-| Statement text | effectively unbounded | no 100 KB ceiling like D1 |
+| Bound parameters per statement | 32766 | the server's limit (`too many SQL variables` above it); the adapter chunks at 900 (`maxBoundParams`) and batches `write` statements |
+| Statement text | effectively unbounded | no ~100 KB per-statement ceiling like D1 (D1 also caps a single value at 2 MB) |
 | Transactions | `client.batch()` is one atomic transaction | use it for writes and for multi-statement reads |
 | TEMP tables | rejected by sqld: `unsupported statement: CREATE TEMP TABLE` | sql-jev never creates them, so nothing to work around |
-| Individual value size | ~4 MB may fail | keep large blobs out of judged relations |
+| Individual value size | ~4 MB | 4 MB worked and ~5 MB failed with `SQLITE_TOOBIG` against a local `sqld`; the Cloud value is undocumented, so keep large blobs out of judged relations |
 | Storage | plan-dependent | see your Turso plan |
 
 ## How a query runs

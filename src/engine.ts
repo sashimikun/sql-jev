@@ -53,7 +53,7 @@ import {
   type JevKind,
   type JevRunStats,
 } from './types.js';
-import type { Adapter } from './adapters/types.js';
+import { splitStatements, type Adapter } from './adapters/types.js';
 
 export interface JudgeSpec {
   kind: JevKind;
@@ -92,6 +92,14 @@ export interface RunSummary {
   api_ms: number;
   estimated_cost_usd: number;
   model: string | null;
+  /** 1 when the judged set failed; the durable jev_stats view reports the sum. */
+  errors?: number;
+}
+
+/** In-process mirror of one judgment: the row hash it was judged for, and the raw answer. */
+interface MirrorEntry {
+  hash: string;
+  raw: string;
 }
 
 export interface QueryResult<T> {
@@ -103,6 +111,64 @@ export interface QueryResult<T> {
 
 const ROW_REF_COLUMN = '__jev_row_ref__';
 const AD_HOC_SCOPE = '@row';
+
+/**
+ * The spend accumulator of ONE statement (one plan()/query()/warm()/judgeArray() call).
+ *
+ * It is deliberately not instance state. jev.max_rows_per_statement /
+ * jev.max_chars_per_statement are sold as a guard for shared and public deployments, and a
+ * single Jev instance is documented as safe to share; a shared accumulator made two
+ * concurrent statements contaminate each other in both directions - a 30-row statement
+ * aborted at 45 rows because a 15-row statement ran beside it, and a 60-row statement
+ * escaped because the concurrent statement had just reset the counter.
+ */
+export interface StatementBudget {
+  rows: number;
+  chars: number;
+}
+
+/** A fresh budget: call this once at the start of every statement. */
+function newStatementBudget(): StatementBudget {
+  return { rows: 0, chars: 0 };
+}
+
+/** What one ensure() call actually spent. The only source of truth for a run summary. */
+interface JudgedTotals {
+  rows: number;
+  requests: number;
+  tokens: number;
+  outputTokens: number;
+  apiMs: number;
+  model: string | null;
+}
+
+/**
+ * The run summary of one satisfied (scope, judgment) pair. Every spend number comes from
+ * JudgedTotals - never from a placeholder. `SELECT * FROM jev_stats` sums jev_runs and the
+ * README tells users to read it for spend, so a run that spent money must record what it spent.
+ */
+function runSummary(
+  scope: string,
+  spec: JudgeSpec,
+  judged: JudgedTotals,
+  alreadyJudged: number,
+): RunSummary {
+  const tokens = judged.tokens;
+  return {
+    scope,
+    kind: spec.kind,
+    condition: spec.condition,
+    judgment_key: spec.key,
+    rows_judged: judged.rows,
+    rows_already_judged: alreadyJudged,
+    requests: judged.requests,
+    input_tokens: tokens,
+    output_tokens: judged.outputTokens,
+    api_ms: judged.apiMs,
+    estimated_cost_usd: Number((tokens * USD_PER_INPUT_TOKEN).toFixed(6)),
+    model: judged.model,
+  };
+}
 
 /**
  * One upsert for every judged row, shared by the parameterized and the literal (D1) path.
@@ -141,9 +207,8 @@ export class Jev {
   private settingsLoaded = false;
   private schemaMissing = false;
   private counters: JevRunStats = emptyRunStats();
-  private statement = { rows: 0, chars: 0 };
   /** In-process mirror of jev_judgments, the GD equivalent. Key: scope|rowRef|judgmentKey. */
-  private memory = new Map<string, string>();
+  private memory = new Map<string, MirrorEntry>();
 
   constructor(options: JevOptions) {
     const { adapter, loadSettings, ...overrides } = options;
@@ -220,7 +285,6 @@ export class Jev {
     if (!options.keepPersisted) {
       await this.adapter.exec('DELETE FROM jev_judgments');
     }
-    this.resetStatement();
   }
 
   // ------------------------------------------------------------------ JS row API
@@ -313,7 +377,13 @@ export class Jev {
 
   // ------------------------------------------------------------------ SQL API
 
-  /** Warms the judgments an SQL statement needs and returns the rewritten statement. */
+  /**
+   * Warms every judgment the statement needs and returns the rewritten statement.
+   *
+   * This is not a cheap string rewrite: it reads the referenced relations ahead and JUDGES the
+   * rows that are not cached yet, so it spends API calls and money. For rewriting with zero API
+   * calls, use the exported pure functions `analyzeSql()` + `rewriteSql()`.
+   */
   async plan(sql: string): Promise<QueryResult<never> & { calls: AnalyzedCall[] }> {
     await this.ready();
     const analysis = analyzeSql(sql);
@@ -321,7 +391,22 @@ export class Jev {
       return { sql, calls: [], rows: [], run: [] };
     }
     this.requireSchema();
-    this.resetStatement();
+    if (!this.config.persistJudgments) {
+      // jev() is rewritten into a lookup on jev_judgments. With persistence off that table stays
+      // empty, so every row would read as -1.0 and the statement would return nothing at all --
+      // a wrong answer, not an error. Refuse loudly instead.
+      throw new JevError(
+        'jev: persistJudgments: false cannot serve SQL that calls jev*(): the rewrites look the ' +
+          'judgments up in jev_judgments, which stays empty, so the statement would silently ' +
+          'return no rows. Keep persistence on for SQL, or use the JS row API ' +
+          '(jev.filter/jev.prob/...) or registerUdfs() with jev.warm().',
+      );
+    }
+    // One budget for the whole statement, owned by this call: plan() shares it across the
+    // relation groups it warms. It is never instance state, because two statements that run
+    // concurrently on one Jev must not share an accumulator - a shared counter both aborts
+    // innocent statements and lets an over-limit statement escape when the other one resets it.
+    const budget = newStatementBudget();
     const groups = new Map<string, { relation: string; relationSql: string; spec: JudgeSpec }>();
     for (const call of analysis.calls) {
       const key = `${call.relation}${KEY_SEP}${call.judgmentKey}`;
@@ -335,7 +420,7 @@ export class Jev {
     }
     const run: RunSummary[] = [];
     for (const group of groups.values()) {
-      run.push(await this.warmRelation(group.relation, group.relationSql, group.spec));
+      run.push(await this.warmRelation(group.relation, group.relationSql, group.spec, budget));
     }
     return {
       sql: rewriteSql(sql, analysis.calls, this.config.threshold),
@@ -350,6 +435,7 @@ export class Jev {
     sql: string,
     params: unknown[] = [],
   ): Promise<QueryResult<T>> {
+    this.assertSingleStatement(sql);
     const planned = await this.plan(sql);
     if (planned.calls.length === 0) {
       const rows = await this.adapter.query<T>(sql, params);
@@ -359,7 +445,33 @@ export class Jev {
     return { rows, sql: planned.sql, run: planned.run };
   }
 
-  /** The rewritten SQL only, for engines you drive yourself (D1 batch(), libSQL batch()). */
+  /**
+   * Runs a script through the adapter's exec(). No jev() rewriting, so this is for DDL and for
+   * multi-statement scripts: jev.query() deliberately refuses those, because most drivers drop
+   * every statement after the first without raising an error.
+   */
+  async exec(sql: string): Promise<void> {
+    await this.adapter.exec(sql);
+  }
+
+  /** jev.query() runs exactly one statement; refuse the rest loudly instead of truncating it. */
+  private assertSingleStatement(sql: string): void {
+    if (splitStatements(sql).length > 1) {
+      throw new JevError(
+        'jev.query() runs one statement: this SQL contains several. Run them one at a time, or ' +
+          'use jev.exec(sql) for a script (drivers silently drop every statement after the first).',
+      );
+    }
+  }
+
+  /**
+   * The rewritten SQL, for engines you drive yourself (D1 batch(), libSQL batch()).
+   *
+   * Like plan(), this WARMS: it reads the relations ahead and judges uncached rows, so it
+   * spends API calls and money before the SQL string is returned. It is not a pure rewrite. For
+   * rewriting only, call `rewriteSql(sql, analyzeSql(sql).calls, threshold)` (all exported from
+   * the package root) and warm separately - e.g. with `await jev.warm(...)`.
+   */
   async translate(sql: string): Promise<string> {
     const planned = await this.plan(sql);
     return planned.sql;
@@ -373,21 +485,32 @@ export class Jev {
   ): Promise<RunSummary> {
     await this.ready();
     this.requireSchema();
-    this.resetStatement();
     const spec = specFor(options.kind ?? 'noul', condition, options.options ?? null);
-    return this.warmRelation(relation, relationSqlFor(relation), spec);
+    // warm() is a statement of its own, so it gets its own budget (see newStatementBudget).
+    return this.warmRelation(relation, relationSqlFor(relation), spec, newStatementBudget());
   }
 
   // ------------------------------------------------------------------ user-defined functions
 
   /**
-   * Registers jev* SQL functions when the engine supports them (bun:sqlite, node:sqlite,
-   * better-sqlite3, libSQL embedded / Turso). Cloudflare D1 cannot: use the rewriter there.
+   * Registers jev* SQL functions, where the handle exposes a create_function API: `node:sqlite`
+   * (`DatabaseSync.function`), `better-sqlite3` (`db.function`) and libSQL builds that expose
+   * `create_function`. This is the *extra* path; the rewriter is the portable one.
    *
-   *   SELECT * FROM people WHERE jev('people', people.rowid, 'the name is European');
+   * It returns false instead of pretending, because two of the platforms this package is sold
+   * for cannot do it at all:
    *
-   * The functions are synchronous lookups into the warmed cache, exactly like pg-jev's
-   * per-row path: warm first (await jev.warm(...) or a query through jev.query), then read.
+   *   - `bun:sqlite` 1.4 has no function()/createFunction API (`typeof db.function` is
+   *     `undefined`, verified on Bun 1.4.0), so a jev created over a bun:sqlite handle reports
+   *     `capabilities.supportsUdf === false` and this returns false.
+   *   - Turso Cloud and Cloudflare D1 have no CREATE FUNCTION, so nothing to register against;
+   *     use `jev.query()`/`jev.translate()` (the rewriter) or the JS row API there.
+   *
+   * Where it does work, the functions are synchronous lookups into the warmed in-process cache,
+   * exactly like pg-jev's per-row path: warm first (await jev.warm(...) or a query through
+   * jev.query()), then read.
+   *
+   *   SELECT * FROM people WHERE jev('people', people._rowid_, 'the name is European');
    */
   registerUdfs(): boolean {
     const adapter = this.adapter;
@@ -410,9 +533,9 @@ export class Jev {
       return parsed.map((item) => String(item));
     };
     const lookup = (scope: string, rowRef: string, spec: JudgeSpec): JevAnswer | null => {
-      const raw = this.memory.get(memoryKey(scope, rowRef, spec.key));
-      if (!raw) return null;
-      return JSON.parse(raw) as JevAnswer;
+      const entry = this.memory.get(memoryKey(scope, rowRef, spec.key));
+      if (!entry) return null;
+      return JSON.parse(entry.raw) as JevAnswer;
     };
     const need = (scope: string, rowRef: string, spec: JudgeSpec): JevAnswer => {
       const answer = lookup(scope, rowRef, spec);
@@ -488,31 +611,38 @@ export class Jev {
     );
   }
 
-  private resetStatement(): void {
-    this.statement = { rows: 0, chars: 0 };
-  }
-
-  /** Spend guard: refuse a statement that would send more than the configured rows/characters. */
-  private guard(sizes: number[]): void {
-    this.statement.rows += sizes.length;
-    this.statement.chars += sizes.reduce((total, size) => total + size, 0);
+  /**
+   * Spend guard: refuse a statement that would send more than the configured rows/characters.
+   * `budget` belongs to exactly one statement (see newStatementBudget), so concurrent
+   * statements on one Jev never see each other's rows.
+   */
+  private guard(budget: StatementBudget, sizes: number[]): void {
+    budget.rows += sizes.length;
+    budget.chars += sizes.reduce((total, size) => total + size, 0);
     const { maxRowsPerStatement, maxCharsPerStatement } = this.config;
-    if (maxRowsPerStatement && this.statement.rows > maxRowsPerStatement) {
+    if (maxRowsPerStatement && budget.rows > maxRowsPerStatement) {
       throw new JevError(
-        `jev: this statement would send ${this.statement.rows} rows to the API, ` +
+        `jev: this statement would send ${budget.rows} rows to the API, ` +
           `above jev.max_rows_per_statement = ${maxRowsPerStatement}`,
       );
     }
-    if (maxCharsPerStatement && this.statement.chars > maxCharsPerStatement) {
+    if (maxCharsPerStatement && budget.chars > maxCharsPerStatement) {
       throw new JevError(
-        `jev: this statement would send ${this.statement.chars} characters of row data to the API, ` +
+        `jev: this statement would send ${budget.chars} characters of row data to the API, ` +
           `above jev.max_chars_per_statement = ${maxCharsPerStatement}`,
       );
     }
   }
 
-  /** Reads up to jev.max_prefetch_rows rows of `relation`, paged by rowid. */
-  private async readRelation(relation: string): Promise<Item[]> {
+  /**
+   * Reads up to jev.max_prefetch_rows rows of `relation`, paged by rowid, and reports whether
+   * the relation held more rows than that.
+   *
+   * Rows past the cap are never judged. The rewritten jev() reads a missing judgment as -1.0,
+   * which is `false`, so `WHERE jev(...)` would silently drop every row past the cap. The caller
+   * decides what to do with `truncated` (see handlePrefetchOverflow); it must never be ignored.
+   */
+  private async readRelation(relation: string): Promise<{ items: Item[]; truncated: boolean }> {
     const items: Item[] = [];
     const limit = this.config.maxPrefetchRows;
     while (items.length < limit) {
@@ -520,16 +650,26 @@ export class Jev {
       let rows: Record<string, unknown>[];
       try {
         rows = await this.adapter.query<Record<string, unknown>>(
-          `SELECT rowid AS ${quoteIdentifier(ROW_REF_COLUMN)}, * FROM ${relation} ` +
-            `ORDER BY rowid LIMIT ? OFFSET ?`,
+          // `_rowid_` rather than `rowid`: SQLite resolves rowid, _rowid_ and oid to the real
+          // rowid unless the table declares a column with that spelling, and a user column named
+          // `rowid` is common. src/rewrite.ts keys its lookup off `_rowid_` too, so the read-ahead
+          // here and the rewritten lookup in SQL must always agree on the spelling.
+          `SELECT _rowid_ AS ${quoteIdentifier(ROW_REF_COLUMN)}, * FROM ${relation} ` +
+            `ORDER BY _rowid_ LIMIT ? OFFSET ?`,
           [page, items.length],
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        // Only claim a rowid problem when the engine actually complains about one: wrapping every
+        // failure in the rowid hint (an out-of-range INTEGER, a locked database, a bad parameter)
+        // sent people hunting for the wrong cause.
+        const rowidProblem = /rowid|no such column|without rowid/i.test(message);
         throw new JevError(
-          `jev: cannot read ahead ${relation}: ${message}. ` +
-            'jev() needs a rowid table; use the JS row API for subqueries, views and ' +
-            'WITHOUT ROWID tables.',
+          `jev: cannot read ahead ${relation}: ${message}` +
+            (rowidProblem
+              ? '. jev() needs a rowid table; use the JS row API for subqueries, views and ' +
+                'WITHOUT ROWID tables.'
+              : ''),
         );
       }
       if (rows.length === 0) break;
@@ -548,53 +688,93 @@ export class Jev {
       }
       if (rows.length < page) break;
     }
+    // Exactly `limit` rows read: was that the whole relation, or is there one more row we would
+    // never judge? A relation holding exactly max_prefetch_rows rows is complete, not truncated.
+    const truncated =
+      items.length >= limit &&
+      (
+        await this.adapter.query<Record<string, unknown>>(
+          `SELECT _rowid_ FROM ${relation} ORDER BY _rowid_ LIMIT 1 OFFSET ?`,
+          [limit],
+        )
+      ).length > 0;
     const hashes = await sha256HexAll(items.map((item) => canonicalJson(item.row)));
     items.forEach((item, index) => {
       item.hash = hashes[index] as string;
     });
-    return items;
+    return { items, truncated };
+  }
+
+  /**
+   * What to do when a relation holds more rows than jev.max_prefetch_rows.
+   *
+   * There is no per-row fallback here the way pg-jev has one: SQLite cannot call the model, so a
+   * row past the cap simply has no judgment, and the rewritten jev()/jev_prob()/jev_score()
+   * read a missing judgment as -1.0 -- false. Returning that as a normal answer is silent
+   * wrongness (a 10-row table with max_prefetch_rows = 4 returned 1 of its 3 German cities and
+   * said nothing), so the default is to refuse the statement; `prefetchOverflow: 'partial'`
+   * keeps the old coverage but says so out loud, whatever `notices` is set to.
+   */
+  private handlePrefetchOverflow(relation: string): void {
+    const message =
+      `jev: ${relation} holds more rows than jev.max_prefetch_rows = ${this.config.maxPrefetchRows}, ` +
+      'so the rows past that cap have no judgment. jev()/jev_prob()/jev_score() read a missing ' +
+      'judgment as -1.0, i.e. false, which silently drops those rows from the result. ' +
+      'Raise jev.max_prefetch_rows to the size of the relation, filter with a predicate SQLite ' +
+      'can evaluate itself, or use the JS row API (jev.filter / jev.prob) for a payload you ' +
+      "already hold. To accept the partial coverage anyway, set prefetchOverflow: 'partial'.";
+    if (this.config.prefetchOverflow !== 'partial') throw new JevError(message);
+    this.config.onNotice(message);
   }
 
   /**
    * Judges one relation + one judgment, reusing everything already stored.
    * `scope` is the unquoted relation name, shared by the SQL lookup, the JS row API and the
    * registered SQL functions, so `warm('people', ...)` and `jev(people, ...)` in SQL agree.
+   * `budget` defaults to a fresh per-call budget: a direct warmRelation() call is its own
+   * statement. plan() passes one shared budget so the whole statement is guarded as a unit.
    */
-  async warmRelation(scope: string, relationSql: string, spec: JudgeSpec): Promise<RunSummary> {
-    const items = await this.readRelation(relationSql);
-    const { judged, alreadyJudged } = await this.ensure(spec, scope, items);
-    const tokens = judged.tokens;
-    const summary: RunSummary = {
-      scope,
-      kind: spec.kind,
-      condition: spec.condition,
-      judgment_key: spec.key,
-      rows_judged: judged.rows,
-      rows_already_judged: alreadyJudged,
-      requests: judged.requests,
-      input_tokens: tokens,
-      output_tokens: judged.outputTokens,
-      api_ms: judged.apiMs,
-      estimated_cost_usd: Number((tokens * USD_PER_INPUT_TOKEN).toFixed(6)),
-      model: judged.model,
-    };
+  async warmRelation(
+    scope: string,
+    relationSql: string,
+    spec: JudgeSpec,
+    budget: StatementBudget = newStatementBudget(),
+  ): Promise<RunSummary> {
+    const { items, truncated } = await this.readRelation(relationSql);
+    if (truncated) this.handlePrefetchOverflow(scope);
+    const { judged, alreadyJudged } = await this.ensure(spec, scope, items, budget);
+    const summary = runSummary(scope, spec, judged, alreadyJudged);
     if (judged.rows > 0) {
       this.notice(
         `jev: ${spec.kind} → judged ${judged.rows} row${judged.rows === 1 ? '' : 's'} of ${scope} ` +
-          `in ${judged.requests} request${judged.requests === 1 ? '' : 's'}, ${tokens} input tokens ` +
+          `in ${judged.requests} request${judged.requests === 1 ? '' : 's'}, ${summary.input_tokens} input tokens ` +
           `(≈$${summary.estimated_cost_usd.toFixed(4)}), ${judged.apiMs.toFixed(0)} ms`,
       );
+      if (this.config.persistJudgments) await this.logRun(summary);
+    } else {
+      this.notice(
+        `jev: ${spec.kind} → all ${items.length} row${items.length === 1 ? '' : 's'} of ${scope} are ` +
+          'already judged: 0 requests, $0',
+      );
     }
-    if (this.config.persistJudgments) await this.logRun(summary);
     return summary;
   }
 
+  /**
+   * Writes one jev_runs row for a statement that actually judged rows, so the durable
+   * `jev_stats` view reports real requests, tokens, ms and cost even in a stateless Worker.
+   *
+   * A pure cache hit is not logged: nothing was sent and nothing was spent, and a row of
+   * placeholder zeros is indistinguishable from a statement whose real spend is zero. Cached
+   * coverage stays visible in `jev_judgments` / `jev_stats.cached_answers` and in the session
+   * `cache_hits` counter, and the notice says "0 requests, $0" out loud.
+   */
   private async logRun(summary: RunSummary): Promise<void> {
     try {
       await this.adapter.query(
         'INSERT INTO jev_runs (scope, judgment_key, kind, model, rows_judged, requests, ' +
-          'input_tokens, output_tokens, api_ms, estimated_cost_usd) ' +
-          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          'input_tokens, output_tokens, api_ms, estimated_cost_usd, errors) ' +
+          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [
           summary.scope,
           summary.judgment_key,
@@ -606,6 +786,7 @@ export class Jev {
           summary.output_tokens,
           summary.api_ms,
           summary.estimated_cost_usd,
+          summary.errors ?? 0,
         ],
       );
     } catch {
@@ -618,9 +799,10 @@ export class Jev {
     spec: JudgeSpec,
     scope: string,
     items: Item[],
+    budget: StatementBudget,
   ): Promise<{
     answers: Map<string, JevAnswer>;
-    judged: { rows: number; requests: number; tokens: number; outputTokens: number; apiMs: number; model: string | null };
+    judged: JudgedTotals;
     alreadyJudged: number;
   }> {
     const answers = new Map<string, JevAnswer>();
@@ -634,15 +816,22 @@ export class Jev {
     const stored = await this.readStored(scope, spec.key, items);
     const missing: Item[] = [];
     for (const item of items) {
-      const memoryRaw = this.memory.get(memoryKey(scope, item.rowRef, spec.key));
-      const storedEntry = stored.get(item.rowRef);
-      if (memoryRaw && storedEntry && storedEntry.hash === item.hash) {
-        answers.set(item.rowRef, JSON.parse(memoryRaw) as JevAnswer);
+      // The in-process mirror is checked on its own, not only as a shortcut for a row that is
+      // also still in jev_judgments: with persistJudgments: false the table is empty by design
+      // and the mirror is the whole cache. It is still hash-checked, so a changed row is judged
+      // again. alwaysRecheck deliberately skips it: that knob means "ask jev_judgments again".
+      const mirror = this.memory.get(memoryKey(scope, item.rowRef, spec.key));
+      if (!this.config.alwaysRecheck && mirror && mirror.hash === item.hash) {
+        answers.set(item.rowRef, JSON.parse(mirror.raw) as JevAnswer);
         continue;
       }
-      if (!this.config.alwaysRecheck && storedEntry && storedEntry.hash === item.hash) {
+      const storedEntry = stored.get(item.rowRef);
+      if (storedEntry && storedEntry.hash === item.hash) {
         answers.set(item.rowRef, storedEntry.answer);
-        this.memory.set(memoryKey(scope, item.rowRef, spec.key), storedEntry.raw);
+        this.memory.set(memoryKey(scope, item.rowRef, spec.key), {
+          hash: storedEntry.hash,
+          raw: storedEntry.raw,
+        });
         continue;
       }
       missing.push(item);
@@ -657,8 +846,28 @@ export class Jev {
         alreadyJudged,
       };
     }
-    this.guard(missing.map((item) => canonicalJson(item.row).length));
-    const fresh = await this.judgeBatch(spec, missing);
+    this.guard(budget, missing.map((item) => canonicalJson(item.row).length));
+    let fresh: {
+      answers: Map<number, JevAnswer>;
+      requests: number;
+      tokens: number;
+      outputTokens: number;
+      apiMs: number;
+      model: string | null;
+    };
+    try {
+      fresh = await this.judgeBatch(spec, missing);
+    } catch (error) {
+      // The session counter already counted the failure; log it durably too, so jev_stats.errors
+      // is not always 0 in a stateless Worker, and rethrow so the caller still sees the error.
+      if (this.config.persistJudgments) {
+        await this.logRun({
+          ...runSummary(scope, spec, { rows: 0, requests: 0, tokens: 0, outputTokens: 0, apiMs: 0, model: null }, alreadyJudged),
+          errors: 1,
+        });
+      }
+      throw error;
+    }
     missing.forEach((item, index) => {
       const answer = fresh.answers.get(index);
       if (answer) answers.set(item.rowRef, answer);
@@ -736,6 +945,7 @@ export class Jev {
     );
     let cursor = 0;
     let completed = 0;
+    let rowsDone = 0;
     const workers = new Array(Math.min(config.concurrency, batches.length)).fill(0).map(async () => {
       while (true) {
         const index = cursor++;
@@ -758,8 +968,10 @@ export class Jev {
           throw error;
         }
         completed += 1;
+        // Progress follows completion order, like pg-jev's as_completed() loop: both numbers only
+        // ever grow, instead of summing whichever batches happen to come first.
+        rowsDone += batch.items.length;
         if (config.notices && batches.length > 1) {
-          const rowsDone = batches.slice(0, completed).reduce((total, b) => total + b.items.length, 0);
           this.notice(
             `jev: progress ${completed}/${batches.length} requests, ${rowsDone}/${items.length} rows`,
           );
@@ -807,7 +1019,12 @@ export class Jev {
     if (!this.config.persistJudgments) {
       for (const item of items) {
         const answer = answers.get(item.rowRef);
-        if (answer) this.memory.set(memoryKey(scope, item.rowRef, spec.key), JSON.stringify(answer));
+        if (answer) {
+          this.memory.set(memoryKey(scope, item.rowRef, spec.key), {
+            hash: item.hash,
+            raw: JSON.stringify(answer),
+          });
+        }
       }
       return;
     }
@@ -818,7 +1035,10 @@ export class Jev {
     for (const item of items) {
       const answer = answers.get(item.rowRef);
       if (!answer) continue;
-      this.memory.set(memoryKey(scope, item.rowRef, spec.key), JSON.stringify(answer));
+      this.memory.set(memoryKey(scope, item.rowRef, spec.key), {
+        hash: item.hash,
+        raw: JSON.stringify(answer),
+      });
       const levels = spec.options ? spec.options.length : null;
       statements.push({
         sql,
@@ -852,7 +1072,7 @@ export class Jev {
       chunks.push(statements.slice(i, i + chunkSize));
     }
     if (this.adapter.batchStatements) {
-      const batches = Math.max(1, this.config.batchStatements);
+      const batches = Math.max(1, Math.min(this.config.batchStatements, caps.maxBatchStatements));
       for (let i = 0; i < chunks.length; i += batches) {
         await this.adapter.batchStatements(chunks.slice(i, i + batches).flat());
       }
@@ -902,7 +1122,6 @@ export class Jev {
   ): Promise<(JevAnswer | undefined)[]> {
     await this.ready();
     this.requireSchema();
-    this.resetStatement();
     if (rows.length === 0) return [];
     const clean = rows.map((row) => jsonSafeRow(row));
     const hashes = await sha256HexAll(clean.map((row) => canonicalJson(row)));
@@ -911,28 +1130,39 @@ export class Jev {
       hash: hashes[index] as string,
       row,
     }));
-    const { answers } = await this.ensure(spec, AD_HOC_SCOPE, items);
-    const run: RunSummary = {
-      scope: AD_HOC_SCOPE,
-      kind: spec.kind,
-      condition: spec.condition,
-      judgment_key: spec.key,
-      rows_judged: items.length,
-      rows_already_judged: 0,
-      requests: 0,
-      input_tokens: 0,
-      output_tokens: 0,
-      api_ms: 0,
-      estimated_cost_usd: 0,
-      model: null,
-    };
-    if (this.config.persistJudgments) await this.logRun(run);
+    const { answers, judged, alreadyJudged } = await this.ensure(
+      spec,
+      AD_HOC_SCOPE,
+      items,
+      newStatementBudget(),
+    );
+    // The JS row API spends exactly like the SQL API, so it reports exactly like the SQL API:
+    // these numbers come from ensure()/judgeBatch(), never from a placeholder.
+    const run = runSummary(AD_HOC_SCOPE, spec, judged, alreadyJudged);
+    if (judged.rows > 0) {
+      this.notice(
+        `jev: ${spec.kind} → judged ${judged.rows} row${judged.rows === 1 ? '' : 's'} ` +
+          `in ${judged.requests} request${judged.requests === 1 ? '' : 's'}, ${run.input_tokens} input tokens ` +
+          `(≈$${run.estimated_cost_usd.toFixed(4)}), ${judged.apiMs.toFixed(0)} ms`,
+      );
+      if (this.config.persistJudgments) await this.logRun(run);
+    } else {
+      this.notice(
+        `jev: ${spec.kind} → all ${items.length} row${items.length === 1 ? '' : 's'} already judged: ` +
+          '0 requests, $0',
+      );
+    }
     return items.map((item) => answers.get(item.rowRef));
   }
 }
 
+/**
+ * The in-process mirror key. JSON.stringify of the tuple is injective for any scope, row ref and
+ * judgment key -- including a condition holding the U+001F separator -- so two different
+ * judgments can never share a mirrored answer.
+ */
 function memoryKey(scope: string, rowRef: string, judgmentKeyValue: string): string {
-  return `${scope}${KEY_SEP}${rowRef}${KEY_SEP}${judgmentKeyValue}`;
+  return JSON.stringify([scope, rowRef, judgmentKeyValue]);
 }
 
 function collectStored(

@@ -4,7 +4,7 @@
  * in addition to the rewriter.
  */
 
-import { isSelect, rowObjects, splitStatements, type Adapter, type AdapterCapabilities, type Statement } from './types.js';
+import { returnsRows, rowObjects, splitStatements, type Adapter, type AdapterCapabilities, type Statement } from './types.js';
 
 export interface LibsqlResultLike {
   rows: unknown[];
@@ -47,7 +47,7 @@ export function libsqlAdapter(client: LibsqlClientLike): Adapter {
     name: 'libsql',
     capabilities,
     async query<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
-      if (!isSelect(sql)) {
+      if (!returnsRows(sql)) {
         await rowsOf(client, sql, params);
         return [];
       }

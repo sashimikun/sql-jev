@@ -21,6 +21,15 @@ export interface JevConfig {
   concurrency: number;
   /** jev.max_prefetch_rows: rows read ahead from the scanned relation. */
   maxPrefetchRows: number;
+  /**
+   * What to do when the relation holds more rows than maxPrefetchRows.
+   *
+   * Rows past the cap are never judged, and the rewritten `jev()` reads a missing judgment as
+   * `-1.0` -- false -- so `WHERE jev(...)` would silently drop them. `'error'` (the default)
+   * refuses the statement with an actionable message; `'partial'` judges the first
+   * maxPrefetchRows rows and emits a coverage warning through onNotice.
+   */
+  prefetchOverflow: 'error' | 'partial';
   /** jev.notices: emit a notice per batch run. */
   notices: boolean;
   /** jev.timeout: seconds per API request. */
@@ -51,6 +60,7 @@ export function defaultConfig(): JevConfig {
     batchSize: 40,
     concurrency: 6,
     maxPrefetchRows: 5000,
+    prefetchOverflow: 'error',
     notices: true,
     timeoutMs: 90_000,
     maxRowsPerStatement: 0,
@@ -106,8 +116,11 @@ export function resolveConfig(
     batchSize: num(settings, 'batch_size', base.batchSize),
     concurrency: num(settings, 'concurrency', base.concurrency),
     maxPrefetchRows: num(settings, 'max_prefetch_rows', base.maxPrefetchRows),
+    prefetchOverflow: settings['prefetch_overflow']
+      ? (settings['prefetch_overflow'] === 'partial' ? 'partial' : 'error')
+      : base.prefetchOverflow,
     notices: bool(settings, 'notices', base.notices),
-    timeoutMs: num(settings, 'timeout', 90) * 1000,
+    timeoutMs: num(settings, 'timeout', base.timeoutMs / 1000) * 1000,
     maxRowsPerStatement: num(settings, 'max_rows_per_statement', base.maxRowsPerStatement),
     maxCharsPerStatement: num(settings, 'max_chars_per_statement', base.maxCharsPerStatement),
     ...overrides,
@@ -123,6 +136,20 @@ export function resolveConfig(
   merged.concurrency = Math.max(1, Math.trunc(merged.concurrency));
   merged.pageSize = Math.max(1, Math.trunc(merged.pageSize));
   merged.batchStatements = Math.max(1, Math.trunc(merged.batchStatements));
+  // A non-positive read-ahead or timeout is a configuration bug, not a mode: say so here
+  // instead of returning zero rows or aborting every request with "unreachable".
+  if (!Number.isFinite(merged.maxPrefetchRows) || merged.maxPrefetchRows < 1) {
+    throw new JevError(
+      `jev: max_prefetch_rows must be a positive number of rows, got '${String(merged.maxPrefetchRows)}'`,
+    );
+  }
+  if (!Number.isFinite(merged.timeoutMs) || merged.timeoutMs <= 0) {
+    throw new JevError(
+      `jev: timeout must be a positive number of seconds, got '${String(merged.timeoutMs / 1000)}'`,
+    );
+  }
+  merged.maxPrefetchRows = Math.trunc(merged.maxPrefetchRows);
+  if (merged.prefetchOverflow !== 'partial') merged.prefetchOverflow = 'error';
   if (merged.apiKey === '') delete merged.apiKey;
   return merged;
 }

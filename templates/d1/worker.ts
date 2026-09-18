@@ -35,6 +35,7 @@
  * ROUTES
  * ------
  *   GET  /       service info + version
+ *   GET  /health alias of GET / (for uptime checks)
  *   GET  /stats  SELECT * FROM jev_stats (durable totals) + this session's counters
  *   POST /query  { "sql": "SELECT ... WHERE jev(people, '...')", "params": [] }
  *                -> { rows, count, run, sql, notes, session }
@@ -44,9 +45,18 @@
  *   POST /judge  { "rows": [{ ... }], "condition": "...", "mode": "filter" | "annotate" }
  *                -> { rows } (filter) or { rows } with a jev_prob column (annotate)
  *
+ * WRITE PROTECTION
+ * ----------------
+ * POST /query accepts exactly one statement and only if it is read-only (SELECT, or WITH
+ * ending in SELECT/VALUES). A CTE can precede a write in SQLite --
+ * `WITH x AS (SELECT 1) DELETE FROM t` -- so the verb that follows the CTE part decides,
+ * not the leading keyword. Everything else (INSERT/UPDATE/DELETE/REPLACE/PRAGMA/DDL) is
+ * refused with 400 before it reaches D1.
+ *
  * AUTH
  * ----
- * Every route except `GET /` requires `Authorization: Bearer <env.API_TOKEN>`.
+ * Every route except `GET /`, `GET /health` and the CORS preflight requires
+ * `Authorization: Bearer <env.API_TOKEN>`.
  * The TypeSafe key lives in env.TYPESAFE_API_KEY and is only ever handed to createJev();
  * it is never echoed in a response, and error text is scrubbed before it leaves.
  */
@@ -311,6 +321,11 @@ export function authorize(request: Request, env: Env): Response | null {
 
 /** Reads a JSON body with a size guard; throws HttpError(413/400) when it is unusable. */
 async function readJsonBody(request: Request): Promise<Record<string, unknown>> {
+  // Refuse a declared-oversized body before buffering it: a Worker has a hard memory limit.
+  const declared = request.headers.get('content-length');
+  if (declared !== null && Number(declared) > MAX_BODY_BYTES) {
+    throw new HttpError(413, `body larger than ${MAX_BODY_BYTES} bytes`);
+  }
   const text = await request.text();
   if (text.length > MAX_BODY_BYTES) throw new HttpError(413, `body larger than ${MAX_BODY_BYTES} bytes`);
   if (text.trim() === '') return {};
@@ -413,15 +428,224 @@ function stripTrailingSeparator(sql: string): string {
   return out;
 }
 
-const LIMIT_AT_END = /\blimit\s+\d+(\s+offset\s+\d+)?\s*$/i;
+/**
+ * String literals, quoted identifiers and comments replaced by spaces. The result keeps the
+ * input's length and every parenthesis, so parens, keywords and parameter markers can be
+ * scanned without being fooled by `'-- not a comment'`, by a `?` inside a literal, or by a
+ * `'limit 5'` string.
+ */
+export function stripNonCode(sql: string): string {
+  const out = [...sql];
+  const blank = (from: number, to: number): void => {
+    for (let index = from; index < to && index < out.length; index += 1) out[index] = ' ';
+  };
+  let index = 0;
+  while (index < sql.length) {
+    const char = sql[index];
+    const next = sql[index + 1];
+    if (char === "'" || char === '"' || char === '`') {
+      const start = index;
+      index += 1;
+      while (index < sql.length) {
+        if (sql[index] === char) {
+          if (sql[index + 1] === char) {
+            index += 2;
+            continue;
+          }
+          index += 1;
+          break;
+        }
+        index += 1;
+      }
+      blank(start, index);
+      continue;
+    }
+    if (char === '[') {
+      const start = index;
+      while (index < sql.length && sql[index] !== ']') index += 1;
+      index += 1;
+      blank(start, index);
+      continue;
+    }
+    if (char === '-' && next === '-') {
+      const start = index;
+      while (index < sql.length && sql[index] !== '\n') index += 1;
+      blank(start, index);
+      continue;
+    }
+    if (char === '/' && next === '*') {
+      const start = index;
+      index += 2;
+      while (index < sql.length && !(sql[index] === '*' && sql[index + 1] === '/')) index += 1;
+      index += 2;
+      blank(start, index);
+      continue;
+    }
+    index += 1;
+  }
+  return out.join('');
+}
 
 /**
- * Keeps a response bounded: when the statement has no LIMIT of its own, one is appended
- * and the caller is told about it in `notes`. An explicit LIMIT is left untouched.
+ * Candidate verbs of a statement: the first word, plus every word that directly follows a
+ * `)` closing a group at the outermost level. That is exactly where the verb of a
+ * `WITH ... AS (...) <verb>` statement sits, so a CTE body cannot hide it.
+ */
+function topLevelVerbCandidates(sql: string): string[] {
+  const stripped = stripNonCode(sql);
+  const words: string[] = [];
+  let depth = 0;
+  let afterGroup = false;
+  let seen = false;
+  let index = 0;
+  while (index < stripped.length) {
+    const char = stripped[index];
+    if (char === '(') {
+      depth += 1;
+      afterGroup = false;
+      index += 1;
+      continue;
+    }
+    if (char === ')') {
+      depth = Math.max(0, depth - 1);
+      afterGroup = depth === 0;
+      index += 1;
+      continue;
+    }
+    if (/\s/.test(char ?? '')) {
+      index += 1;
+      continue;
+    }
+    if (depth > 0) {
+      afterGroup = false;
+      index += 1;
+      continue;
+    }
+    const match = /^[A-Za-z_][A-Za-z0-9_]*/.exec(stripped.slice(index));
+    if (!match) {
+      afterGroup = false;
+      index += 1;
+      continue;
+    }
+    if (!seen || afterGroup) words.push(match[0].toUpperCase());
+    seen = true;
+    afterGroup = false;
+    index += match[0].length;
+  }
+  return words;
+}
+
+const STATEMENT_VERBS = new Set([
+  'SELECT', 'VALUES', 'INSERT', 'UPDATE', 'DELETE', 'REPLACE', 'CREATE', 'DROP', 'ALTER',
+  'PRAGMA', 'VACUUM', 'REINDEX', 'ANALYZE', 'ATTACH', 'DETACH', 'BEGIN', 'COMMIT', 'ROLLBACK',
+  'SAVEPOINT', 'RELEASE', 'END', 'EXPLAIN', 'LOAD', 'MERGE', 'CALL', 'SET',
+]);
+
+/**
+ * The verb the statement really runs. SQLite allows a CTE before a write
+ * (`WITH x AS (SELECT 1) DELETE FROM t`), so the leading keyword on its own is not enough
+ * to tell a read from a write.
+ */
+export function statementVerb(sql: string): string {
+  for (const word of topLevelVerbCandidates(sql)) if (STATEMENT_VERBS.has(word)) return word;
+  return '';
+}
+
+/** Only a statement that really runs SELECT/VALUES may reach D1: this Worker is read-only. */
+export function isReadOnlyStatement(sql: string): boolean {
+  const verb = statementVerb(sql);
+  return verb === 'SELECT' || verb === 'VALUES';
+}
+
+/**
+ * True when the statement carries a LIMIT of its own, at the outermost level and outside
+ * literals and comments: `LIMIT 5`, `LIMIT 5 OFFSET 2`, `LIMIT ?`, `LIMIT 2, 1`, `LIMIT 5 --`.
+ * A LIMIT inside a subquery does not count: the outer statement is still unbounded.
+ */
+export function hasTopLevelLimit(sql: string): boolean {
+  const stripped = stripNonCode(sql);
+  let depth = 0;
+  let index = 0;
+  while (index < stripped.length) {
+    const char = stripped[index];
+    if (char === '(') {
+      depth += 1;
+      index += 1;
+      continue;
+    }
+    if (char === ')') {
+      depth = Math.max(0, depth - 1);
+      index += 1;
+      continue;
+    }
+    if (depth > 0) {
+      index += 1;
+      continue;
+    }
+    const match = /^[A-Za-z_][A-Za-z0-9_]*/.exec(stripped.slice(index));
+    if (!match) {
+      index += 1;
+      continue;
+    }
+    if (match[0].toUpperCase() === 'LIMIT') return true;
+    index += match[0].length;
+  }
+  return false;
+}
+
+/**
+ * How many bound values the statement needs, using SQLite's own index assignment for `?`,
+ * `?NNN`, `:name` and `@name`. Returns null when the statement contains a `$` followed by an
+ * identifier character: that is either a `$name` parameter or a `$` inside an identifier, and
+ * a text scan cannot tell them apart, so the count is left to D1.
+ */
+export function boundParameterCount(sql: string): number | null {
+  const stripped = stripNonCode(sql);
+  if (/\$[A-Za-z0-9_]/.test(stripped)) return null;
+  const named = new Set<string>();
+  let next = 0;
+  let index = 0;
+  while (index < stripped.length) {
+    const char = stripped[index];
+    if (char === '?') {
+      const digits = /^\d+/.exec(stripped.slice(index + 1));
+      if (digits) {
+        next = Math.max(next, Number(digits[0]));
+        index += 1 + digits[0].length;
+        continue;
+      }
+      next += 1;
+      index += 1;
+      continue;
+    }
+    if (char === ':' || char === '@') {
+      const match = /^[A-Za-z_][A-Za-z0-9_]*/.exec(stripped.slice(index + 1));
+      if (match) {
+        const name = `${char}${match[0].toLowerCase()}`;
+        if (!named.has(name)) {
+          named.add(name);
+          next += 1;
+        }
+        index += 1 + match[0].length;
+        continue;
+      }
+    }
+    index += 1;
+  }
+  return next;
+}
+
+/**
+ * Keeps a response bounded: when the statement has no LIMIT of its own, one is appended and
+ * the caller is told about it in `notes`. An explicit LIMIT is left untouched -- including
+ * `LIMIT ?` and SQLite's `LIMIT offset, count` form.
  */
 export function boundRows(sql: string, maxRows: number): { sql: string; notes: string[] } {
   const trimmed = stripTrailingSeparator(sql);
-  if (LIMIT_AT_END.test(trimmed)) return { sql: trimmed, notes: [] };
+  if (hasTopLevelLimit(trimmed)) return { sql: trimmed, notes: [] };
+  // `VALUES (1), (2)` is a literal list already bounded by the statement text, and SQLite
+  // rejects a LIMIT clause after a bare VALUES list (`near "LIMIT": syntax error`).
+  if (statementVerb(trimmed) === 'VALUES') return { sql: trimmed, notes: [] };
   return {
     sql: `${trimmed} LIMIT ${maxRows}`,
     notes: [`appended LIMIT ${maxRows}: raise env.JEV_MAX_ROWS or add an explicit LIMIT for more`],
@@ -492,7 +716,13 @@ function optionalKind(value: unknown): JevKind | undefined {
 function optionalStringArray(value: unknown, field: string): string[] | null {
   if (value === undefined || value === null) return null;
   if (!Array.isArray(value)) throw new HttpError(400, `${field} must be an array of strings`);
-  return value.map((item) => String(item));
+  return value.map((item) => {
+    // No silent String() coercion: [1, 2] would otherwise become the levels "1" and "2".
+    if (typeof item !== 'string' || item.trim() === '') {
+      throw new HttpError(400, `${field} must be an array of non-empty strings`);
+    }
+    return item;
+  });
 }
 
 // ------------------------------------------------------------------ routes
@@ -505,6 +735,7 @@ function serviceInfo(): Record<string, unknown> {
     database: 'd1 (binding DB)',
     routes: {
       'GET /': 'service info + version',
+      'GET /health': 'alias of GET / (no auth, for uptime checks)',
       'GET /stats': 'SELECT * FROM jev_stats, plus this session counters',
       'POST /query': '{ sql, params? } -> { rows, count, run, sql, notes, session }',
       'POST /warm': '{ relation, condition, kind?, options? } -> { run }',
@@ -514,6 +745,8 @@ function serviceInfo(): Record<string, unknown> {
       max_rows_per_query: MAX_ROWS_CEILING,
       max_bound_params: MAX_BOUND_PARAMS,
       max_statement_bytes: MAX_STATEMENT_BYTES,
+      max_judge_rows: MAX_JUDGE_ROWS,
+      max_body_bytes: MAX_BODY_BYTES,
       d1_queries_per_invocation: D1_QUERY_BUDGET,
       user_defined_sql_functions: false,
       interactive_transactions: false,
@@ -521,8 +754,9 @@ function serviceInfo(): Record<string, unknown> {
     },
     notes: [
       'SQL cannot call the network, so jev* calls are rewritten into jev_judgments lookups.',
+      'One read-only SELECT/WITH statement per POST /query; a null response never means "missing data".',
       'The TypeSafe key is used by the server only and is never returned.',
-      'Auth: Authorization: Bearer <API_TOKEN> on every route except GET /.',
+      'Auth: Authorization: Bearer <API_TOKEN> on every route except GET / and OPTIONS.',
     ],
   };
 }
@@ -541,6 +775,9 @@ async function handleStats(env: Env): Promise<Response> {
 async function handleQuery(request: Request, env: Env): Promise<Response> {
   const body = await readJsonBody(request);
   const raw = requireString(body.sql, 'sql');
+  if (body.params !== undefined && body.params !== null && !Array.isArray(body.params)) {
+    throw new HttpError(400, 'params must be an array of bound values');
+  }
   const params = Array.isArray(body.params) ? body.params : [];
   if (new TextEncoder().encode(raw).length > MAX_STATEMENT_BYTES) {
     throw new HttpError(413, `sql exceeds the D1 limit of ${MAX_STATEMENT_BYTES} bytes per statement`);
@@ -552,8 +789,23 @@ async function handleQuery(request: Request, env: Env): Promise<Response> {
   if (keyword !== 'SELECT' && keyword !== 'WITH') {
     throw new HttpError(400, `only SELECT/WITH statements are allowed, got '${keyword || 'an empty statement'}'`);
   }
+  // `WITH x AS (SELECT 1) DELETE FROM t` is one statement whose first keyword is WITH, and
+  // D1 would run the DELETE. The verb decides, not the leading keyword.
+  if (!isReadOnlyStatement(raw)) {
+    throw new HttpError(
+      400,
+      `only read-only SELECT/WITH statements are allowed, this one runs ${statementVerb(raw)}`,
+    );
+  }
   if (params.length > MAX_BOUND_PARAMS) {
     throw new HttpError(400, `D1 allows at most ${MAX_BOUND_PARAMS} bound parameters, got ${params.length}`);
+  }
+  const expected = boundParameterCount(raw);
+  if (expected !== null && expected !== params.length) {
+    throw new HttpError(
+      400,
+      `sql expects ${expected} bound parameter${expected === 1 ? '' : 's'}, got ${params.length}`,
+    );
   }
 
   const cap = maxRows(env);
@@ -583,8 +835,23 @@ async function handleWarm(request: Request, env: Env): Promise<Response> {
   const body = await readJsonBody(request);
   const relation = requireString(body.relation, 'relation');
   const condition = requireString(body.condition, 'condition');
-  const kind = optionalKind(body.kind);
+  const kind = optionalKind(body.kind) ?? 'noul';
   const options = optionalStringArray(body.options, 'options');
+  // jev_choice and jev_score take their levels from `options`; without them the SDK throws
+  // and the client sees a 500 for what is a missing request field.
+  if (kind === 'choice' || kind === 'score') {
+    if (options === null || options.length === 0) {
+      throw new HttpError(400, `kind '${kind}' needs options: pass options: ['level', ...]`);
+    }
+    if (new Set(options).size !== options.length) {
+      // Duplicate levels make the legend ambiguous, so the answer would be a guess.
+      throw new HttpError(400, `options must not repeat: ${JSON.stringify(options)}`);
+    }
+  } else if (options !== null) {
+    // `jev(people, 'condition')` carries no options; warming with them would store a second
+    // judgment under a different key and judge every row twice.
+    throw new HttpError(400, "options only apply to kind 'score' or 'choice'");
+  }
 
   const jev = await connect(env);
   const run = await jev.warm(relation, condition, { kind, options });

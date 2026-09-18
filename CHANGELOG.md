@@ -26,8 +26,8 @@ Turso / libSQL, Cloudflare D1 and plain SQLite.
   bring-your-own `Adapter` interface. D1 limits (100 bound parameters, ~100 KB statements,
   1000 queries per invocation) shape the write path: literal statements packed into few
   `exec()` calls.
-- Optional `registerUdfs()` installs the `jev*` function set where the engine exposes
-  `create_function`.
+- Optional `registerUdfs()` installs the `jev*` function set where the engine exposes a UDF
+  registration API (`node:sqlite`, `better-sqlite3`); elsewhere it returns `false`.
 - JS row API for subquery results and JSON payloads: `filter`, `annotate`, `prob`, `score`,
   `scoreNorm`, `choice`, `confidence`, `eval`.
 
@@ -36,4 +36,4 @@ Turso / libSQL, Cloudflare D1 and plain SQLite.
 - `sql-jev init | deploy turso | deploy d1 | sql | stats | version`, with verified deploy plans
   and `--dry-run`.
 - `sql/sql-jev.sql` is the single source of the schema; `src/schema.ts` is generated from it.
-- Deterministic mock TypeSafe endpoint; 35 tests that never touch the live API.
+- Deterministic mock TypeSafe endpoint; the test suite never touches the live API (`bun test`).

@@ -1,10 +1,11 @@
 /**
  * Any in-process SQLite handle: bun:sqlite, node:sqlite, better-sqlite3.
- * These expose statement objects and (except node:sqlite) user-defined functions, so both the
- * rewriter and native jev* SQL functions work here.
+ * These expose statement objects, and user-defined functions where the runtime provides them:
+ * node:sqlite and better-sqlite3 have database.function(), while bun:sqlite 1.4 has no
+ * function() API at all, so registerUdfs() reports false there and the rewriter is the path.
  */
 
-import { isSelect, rowObjects, type Adapter, type AdapterCapabilities, type Statement } from './types.js';
+import { returnsRows, rowObjects, type Adapter, type AdapterCapabilities, type Statement } from './types.js';
 
 export interface SqliteStatementLike {
   all?(...params: unknown[]): unknown[];
@@ -27,7 +28,7 @@ function statement(db: SqliteLike, sql: string): SqliteStatementLike {
 
 function execute(db: SqliteLike, sql: string, params: unknown[]): unknown[] {
   const prepared = statement(db, sql);
-  if (isSelect(sql)) {
+  if (returnsRows(sql)) {
     if (typeof prepared.all === 'function') return prepared.all(...params);
     if (typeof prepared.get === 'function') {
       const row = prepared.get(...params);

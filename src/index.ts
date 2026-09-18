@@ -150,9 +150,13 @@ export {
 export type { JevAnswer, JevKind, JevRunStats, JevUsage } from './types.js';
 export {
   d1Adapter,
+  isSelect,
   libsqlAdapter,
+  returnsRows,
   rowObjects,
+  splitStatements,
   sqliteAdapter,
+  statementVerb,
 } from './adapters/index.js';
 export type {
   Adapter,

@@ -19,7 +19,7 @@ describe('rewriting jev() for engines without user-defined functions', () => {
     expect(call.judgmentKey).toBe('noul\u001fthe name is European\u001f');
     expect(sql).toContain(
       'FROM jev_judgments j WHERE j.scope = \'people\' ' +
-        'AND j.row_ref = CAST("people".rowid AS TEXT)',
+        'AND j.row_ref = CAST("people"._rowid_ AS TEXT)',
     );
     expect(sql).toContain('>= COALESCE(0.5, 0.5)');
     expect(sql).not.toMatch(/\bjev\s*\(/);
@@ -29,7 +29,7 @@ describe('rewriting jev() for engines without user-defined functions', () => {
     const byAlias = plan("SELECT name FROM cities c WHERE jev(c, 'x')");
     expect(byAlias.calls[0]!.relation).toBe('cities');
     expect(byAlias.calls[0]!.rowAlias).toBe('c');
-    expect(byAlias.sql).toContain('CAST("c".rowid AS TEXT)');
+    expect(byAlias.sql).toContain('CAST("c"._rowid_ AS TEXT)');
 
     const byTable = plan("SELECT name FROM cities AS c WHERE jev(cities, 'x')");
     expect(byTable.calls[0]!.relation).toBe('cities');

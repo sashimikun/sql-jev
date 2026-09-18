@@ -39,7 +39,8 @@
     "init": "bun run src/cli.ts init",
     "deploy:turso": "bun run src/cli.ts deploy turso",
     "deploy:d1": "bun run src/cli.ts deploy d1",
-    "deploy:d1:worker": "bun run src/cli.ts deploy d1 --worker"
+    "deploy:d1:worker": "bun run src/cli.ts deploy d1 --worker",
+    "typecheck:all": "tsc -p tsconfig.json --noEmit && tsc --noEmit --strict --target es2022 --module esnext --moduleResolution bundler --skipLibCheck templates/d1/worker.ts && bash -n templates/turso/deploy.sh"
   },
   "keywords": [
     "sqlite",
@@ -52,6 +53,14 @@
     "natural-language",
     "semantic-filter"
   ],
+  "peerDependencies": {
+    "@libsql/client": ">=0.18.0"
+  },
+  "peerDependenciesMeta": {
+    "@libsql/client": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "typescript": "^5.7.2"

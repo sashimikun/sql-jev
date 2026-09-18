@@ -6,7 +6,7 @@
  * multi-statement exec() writes to stay inside the 1000-queries-per-invocation budget.
  */
 
-import { isSelect, rowObjects, type Adapter, type AdapterCapabilities, type Statement } from './types.js';
+import { returnsRows, rowObjects, type Adapter, type AdapterCapabilities, type Statement } from './types.js';
 
 export interface D1PreparedStatementLike {
   bind(...values: unknown[]): D1PreparedStatementLike;
@@ -44,7 +44,7 @@ export function d1Adapter(db: D1DatabaseLike): Adapter {
     name: 'd1',
     capabilities: D1_CAPABILITIES,
     async query<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
-      if (!isSelect(sql)) {
+      if (!returnsRows(sql)) {
         await run(db, sql, params);
         return [];
       }

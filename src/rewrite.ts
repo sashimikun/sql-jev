@@ -335,17 +335,71 @@ function readRelation(
   return { relation: { name, key }, nextIdx: i };
 }
 
-function buildAliasMap(tokens: Token[]): Map<string, string> {
-  const map = new Map<string, string>();
+/**
+ * One `FROM`/`JOIN` handle, together with the SQL scope it belongs to.
+ *
+ * SQL aliases are scoped: a subquery may rebind an alias that the outer query already uses, and
+ * the inner binding wins for calls inside it. Recording the scope (the innermost enclosing `(`
+ * token, or `-1` at the top level) is what keeps `jeva()` lookups on the relation the call
+ * actually names instead of whichever `FROM` happened to appear first.
+ */
+interface RelationBinding {
+  /** Lowercased name the user may write: the alias, or the relation name when there is none. */
+  key: string;
+  /** The alias exactly as written (for quoting), or null when the handle has no alias. */
+  aliasText: string | null;
+  /** Relation this handle reads, or null when it reads a subquery (no rowid to look up). */
+  relation: string | null;
+  /** Innermost enclosing '(' token index; -1 at the top level. */
+  scope: number;
+}
+
+/** For every token, the innermost '(' that encloses it (-1 outside every parenthesis). */
+function enclosingScopes(tokens: Token[]): number[] {
+  const enclosing = new Array<number>(tokens.length).fill(-1);
+  const stack: number[] = [];
+  tokens.forEach((token, index) => {
+    if (token.kind === 'punct' && token.value === ')') {
+      if (stack.length > 0) stack.pop();
+    }
+    enclosing[index] = stack.length > 0 ? (stack[stack.length - 1] as number) : -1;
+    if (token.kind === 'punct' && token.value === '(') stack.push(index);
+  });
+  return enclosing;
+}
+
+/** Scopes a token can see, innermost first: its own, then every enclosing one. */
+function visibleScopes(enclosing: number[], index: number): number[] {
+  const chain: number[] = [];
+  let scope = enclosing[index] ?? -1;
+  while (scope !== -1 && !chain.includes(scope)) {
+    chain.push(scope);
+    scope = enclosing[scope] ?? -1;
+  }
+  chain.push(-1);
+  return chain;
+}
+
+/** Every FROM/JOIN handle in the statement; subquery handles carry relation === null. */
+function buildBindings(tokens: Token[], enclosing: number[]): RelationBinding[] {
+  const bindings: RelationBinding[] = [];
+  const add = (binding: RelationBinding): void => {
+    const clash = bindings.some(
+      (other) => other.scope === binding.scope && other.key === binding.key,
+    );
+    if (!clash) bindings.push(binding);
+  };
   for (let i = 0; i < tokens.length; i += 1) {
     const tok = tokens[i] as Token;
     if (tok.kind !== 'word') continue;
     const keyword = tok.value.toLowerCase();
     if (keyword !== 'from' && keyword !== 'join') continue;
+    const scope = enclosing[i] ?? -1;
     const after = tokens[i + 1];
     if (!after) continue;
     if (after.kind === 'punct' && after.value === '(') {
-      // A subquery: only its trailing alias is a relation handle.
+      // A subquery or table-valued function: only its trailing alias is a handle, and it has
+      // no rowid to key a judgment on.
       const close = matchParen(tokens, i + 1);
       if (close === -1) continue;
       let j = close + 1;
@@ -354,7 +408,12 @@ function buildAliasMap(tokens: Token[]): Map<string, string> {
       const aliasTok = tokens[j];
       if (aliasTok && (aliasTok.kind === 'word' || aliasTok.kind === 'quoted')) {
         if (aliasTok.kind === 'quoted' || !RESERVED.has(aliasTok.value.toLowerCase())) {
-          map.set(aliasTok.value.toLowerCase(), aliasTok.value);
+          add({
+            key: aliasTok.value.toLowerCase(),
+            aliasText: aliasTok.value,
+            relation: null,
+            scope,
+          });
         }
       }
       continue;
@@ -363,27 +422,93 @@ function buildAliasMap(tokens: Token[]): Map<string, string> {
     const read = readRelation(tokens, i + 1);
     if (!read) continue;
     const { relation, nextIdx } = read;
-    let j = nextIdx;
-    let alias: string | null = null;
-    const asTok = tokens[j];
+    let aliasTok: Token | null = null;
+    const asTok = tokens[nextIdx];
     if (asTok && asTok.kind === 'word' && asTok.value.toLowerCase() === 'as') {
-      const aliasTok = tokens[j + 1];
-      if (aliasTok && (aliasTok.kind === 'word' || aliasTok.kind === 'quoted')) {
-        alias = aliasTok.value;
-        j += 2;
-      }
-    } else if (asTok && (asTok.kind === 'quoted' || (asTok.kind === 'word' && !RESERVED.has(asTok.value.toLowerCase())))) {
-      alias = asTok.value;
+      const written = tokens[nextIdx + 1];
+      if (written && (written.kind === 'word' || written.kind === 'quoted')) aliasTok = written;
+    } else if (
+      asTok &&
+      (asTok.kind === 'quoted' ||
+        (asTok.kind === 'word' && !RESERVED.has(asTok.value.toLowerCase())))
+    ) {
+      aliasTok = asTok;
+    }
+    if (aliasTok) {
+      add({
+        key: aliasTok.value.toLowerCase(),
+        aliasText: aliasTok.value,
+        relation: relation.key,
+        scope,
+      });
+      continue;
+    }
+    add({ key: relation.key.toLowerCase(), aliasText: null, relation: relation.key, scope });
+  }
+  return bindings;
+}
+
+/** Names bound by `WITH name AS (...)`; they read rows with no rowid of their own. */
+function collectCteNames(tokens: Token[]): Set<string> {
+  const names = new Set<string>();
+  for (let i = 0; i < tokens.length; i += 1) {
+    const tok = tokens[i] as Token;
+    if (tok.kind !== 'word' || tok.value.toLowerCase() !== 'with') continue;
+    let j = i + 1;
+    const recursive = tokens[j];
+    if (recursive && recursive.kind === 'word' && recursive.value.toLowerCase() === 'recursive') {
       j += 1;
     }
-    const key = (alias ?? relation.key).toLowerCase();
-    if (!map.has(key)) map.set(key, relation.key);
-    if (!alias) {
-      const selfKey = relation.key.toLowerCase();
-      if (!map.has(selfKey)) map.set(selfKey, relation.key);
+    for (;;) {
+      const name = tokens[j];
+      if (!name || (name.kind !== 'word' && name.kind !== 'quoted')) break;
+      if (name.kind === 'word' && RESERVED.has(name.value.toLowerCase())) break;
+      let k = j + 1;
+      const columnList = tokens[k];
+      if (columnList && columnList.kind === 'punct' && columnList.value === '(') {
+        const close = matchParen(tokens, k);
+        if (close === -1) break;
+        k = close + 1;
+      }
+      const asTok = tokens[k];
+      if (!asTok || asTok.kind !== 'word' || asTok.value.toLowerCase() !== 'as') break;
+      let openIdx = k + 1;
+      const hint = tokens[openIdx];
+      if (hint && hint.kind === 'word' && hint.value.toLowerCase() === 'materialized') openIdx += 1;
+      else if (hint && hint.kind === 'word' && hint.value.toLowerCase() === 'not') {
+        const next = tokens[openIdx + 1];
+        if (next && next.kind === 'word' && next.value.toLowerCase() === 'materialized') {
+          openIdx += 2;
+        }
+      }
+      const open = tokens[openIdx];
+      if (!open || open.kind !== 'punct' || open.value !== '(') break;
+      const close = matchParen(tokens, openIdx);
+      if (close === -1) break;
+      names.add(name.value.toLowerCase());
+      const comma = tokens[close + 1];
+      if (!comma || comma.kind !== 'punct' || comma.value !== ',') break;
+      j = close + 2;
     }
   }
+  return names;
+}
+
+/** Flat alias (lowercased) -> relation map, kept for callers that only need the handle list. */
+function aliasMapFrom(bindings: RelationBinding[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const binding of bindings) {
+    if (!map.has(binding.key)) map.set(binding.key, binding.relation ?? binding.key);
+  }
   return map;
+}
+
+function noRowidError(fn: string, name: string): JevSqlError {
+  return new JevSqlError(
+    `${fn}: '${name}' is a subquery or CTE handle in this statement, which has no rowid. ` +
+      'Rows from a subquery have no rowid; read them through the JS row API ' +
+      '(await jev.filter(rows, condition)) instead.',
+  );
 }
 
 /** Reads `people`, `main.people` or `"my table"` as a call's first argument. */
@@ -444,7 +569,10 @@ function outputFor(fn: string, kind: JevKind): CallOutput {
 /** Locates every jev* call and resolves relation, condition, options and threshold. */
 export function analyzeSql(sql: string): SqlAnalysis {
   const tokens = tokenize(sql);
-  const aliases = buildAliasMap(tokens);
+  const enclosing = enclosingScopes(tokens);
+  const bindings = buildBindings(tokens, enclosing);
+  const ctes = collectCteNames(tokens);
+  const aliases = aliasMapFrom(bindings);
   const calls: AnalyzedCall[] = [];
   for (let i = 0; i < tokens.length; i += 1) {
     const tok = tokens[i] as Token;
@@ -464,23 +592,51 @@ export function analyzeSql(sql: string): SqlAnalysis {
     const relationAlias = nameParts.text;
     const relationAliasSql = nameParts.sql;
     const key = relationAlias.toLowerCase();
-    const written = aliases.get(key);
-    const relation = written ?? relationAlias;
-    let rowAlias = relationAlias;
-    let rowAliasSql = relationAliasSql;
-    if (written === undefined) {
-      const candidates = [...aliases.entries()].filter(([, rel]) => rel.toLowerCase() === key);
+    const chain = visibleScopes(enclosing, i);
+    const visible = bindings.filter((binding) => chain.includes(binding.scope));
+    let bound: RelationBinding | undefined;
+    for (const scope of chain) {
+      bound = visible.find((binding) => binding.key === key && binding.scope === scope);
+      if (bound) break;
+    }
+    if (bound && bound.relation === null) throw noRowidError(fn, relationAlias);
+    if (bound && bound.relation !== null && ctes.has(bound.relation.toLowerCase())) {
+      throw noRowidError(fn, bound.relation);
+    }
+    if (!bound && ctes.has(key)) throw noRowidError(fn, relationAlias);
+
+    let relation: string;
+    let relationSql: string;
+    let rowAlias: string;
+    let rowAliasSql: string;
+    if (bound) {
+      relation = bound.relation as string;
+      relationSql = relationSqlFor(relation);
+      rowAlias = bound.aliasText ?? bound.key;
+      rowAliasSql = bound.aliasText === null ? relationSql : quoteIdentifier(bound.aliasText);
+    } else {
+      // The call names a relation, not an alias: find the alias that reads it, in scope only.
+      relation = relationAlias;
+      relationSql = relationAliasSql;
+      rowAlias = relationAlias;
+      rowAliasSql = relationAliasSql;
+      const candidates = visible.filter(
+        (binding) => binding.relation !== null && binding.relation.toLowerCase() === key,
+      );
       if (candidates.length === 1) {
-        rowAlias = candidates[0]![0];
-        rowAliasSql = quoteIdentifier(rowAlias);
+        const candidate = candidates[0] as RelationBinding;
+        rowAlias = candidate.aliasText ?? candidate.key;
+        rowAliasSql =
+          candidate.aliasText === null
+            ? relationSqlFor(candidate.relation as string)
+            : quoteIdentifier(candidate.aliasText);
       } else if (candidates.length > 1) {
         throw new JevSqlError(
           `${fn}: '${relationAlias}' is ambiguous in this statement; use one of the aliases: ` +
-            candidates.map(([alias]) => alias).join(', '),
+            candidates.map((candidate) => candidate.aliasText ?? candidate.key).join(', '),
         );
       }
     }
-    const relationSql = written === undefined ? relationAliasSql : relationSqlFor(written);
 
     let kind: JevKind = 'noul';
     let options: string[] | null = null;
@@ -561,9 +717,13 @@ export function analyzeSql(sql: string): SqlAnalysis {
 
 /** Unwarmed rows read as -1 (prob/score), '' (choice), or NULL (confidence/eval). */
 export function renderCall(call: AnalyzedCall, fallbackThreshold: number): string {
+  // `_rowid_` rather than `rowid`: SQLite resolves `rowid`, `_rowid_` and `oid` to the real rowid
+  // unless the table declares a column with that name, and a user column called `rowid` is common.
+  // `_rowid_` is the spelling a user column is least likely to shadow, so the lookup keys off the
+  // real rowid instead of silently matching whatever the table's `rowid` column holds.
   const where =
     `FROM jev_judgments j WHERE j.scope = ${quoteLiteral(call.relation)}` +
-    ` AND j.row_ref = CAST(${call.rowAliasSql}.rowid AS TEXT)` +
+    ` AND j.row_ref = CAST(${call.rowAliasSql}._rowid_ AS TEXT)` +
     ` AND j.judgment_key = ${quoteLiteral(call.judgmentKey)}`;
   const subExpr = (expr: string): string => `(SELECT ${expr} ${where})`;
   switch (call.output) {

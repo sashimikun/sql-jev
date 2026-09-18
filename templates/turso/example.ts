@@ -13,9 +13,10 @@
  * itself has zero runtime dependencies; the client is what speaks the libsql:// wire
  * protocol.
  *
- * Turso has NO user-defined SQL functions: the libSQL client Turso Cloud hands you has
- * no create_function, and load_extension is not authorized. So jev.registerUdfs() does
- * nothing here and the rewriter inside jev.query()/jev.translate() is the only path.
+ * Turso has NO user-defined SQL functions: the @libsql/client the SDK hands you exposes no
+ * create_function on any transport (local file:, embedded replica or Cloud), and
+ * load_extension is not authorized. So jev.registerUdfs() does nothing here and the rewriter
+ * inside jev.query()/jev.translate() is the only path.
  * What Turso does give you is a much larger parameter budget (32766), effectively
  * unbounded statement text, and atomic client.batch() -- see README.md.
  */
@@ -47,13 +48,15 @@ console.log('schema version:', await jev.version());
 await client.execute('DROP TABLE IF EXISTS people');
 await client.execute('CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT NOT NULL, note TEXT)');
 
+// Synthetic rows only: this script sends every field of every row to the TypeSafe API, so
+// never put real people, customers or private data here (or in a table you judge).
 const sample: Array<[string, string]> = [
-  ['Ada Lovelace', 'first programmer, London'],
-  ['Grace Hopper', 'computing pioneer, New York'],
-  ['Marie Curie', 'physicist and chemist, Warsaw and Paris'],
-  ['Alan Turing', 'mathematician, London'],
-  ['Katherine Johnson', 'orbital mechanics, Hampton'],
-  ['Yukio Mishima', 'novelist, Tokyo'],
+  ['Anouk Dekker', 'physiotherapist, Rotterdam'],
+  ['Mateo Alvarez', 'database engineer, Madrid'],
+  ['Yuki Tanaka', 'pediatric nurse, Osaka'],
+  ['Ingrid Halvorsen', 'warehouse manager, Bergen'],
+  ['Chidi Okafor', 'radiologist, Lagos'],
+  ['Sofia Moretti', 'teacher, Turin'],
 ];
 
 // One batch is one atomic transaction on libSQL.
@@ -97,9 +100,9 @@ console.log('\n-- 3. warm()', summary.rows_judged, 'rows,', summary.requests, 'r
 
 // No table required: rows are hashed into the same jev_judgments cache under scope '@row'.
 const people = [
-  { name: 'Ada Lovelace', note: 'first programmer, London' },
-  { name: 'Grace Hopper', note: 'computing pioneer, New York' },
-  { name: 'Yukio Mishima', note: 'novelist, Tokyo' },
+  { name: 'Anouk Dekker', note: 'physiotherapist, Rotterdam' },
+  { name: 'Mateo Alvarez', note: 'database engineer, Madrid' },
+  { name: 'Yuki Tanaka', note: 'pediatric nurse, Osaka' },
 ];
 
 const kept = await jev.filter(people, 'the name is European');
@@ -114,9 +117,10 @@ console.log('-- 5. durable totals:', await jev.dbStats()); // SELECT * FROM jev_
 
 // ---------------------------------------------------------------- 6. UDFs: not on Turso
 
-// false on Turso Cloud: there is no create_function, and load_extension is refused.
-// registerUdfs() returns true only on engines that expose one, such as bun:sqlite,
-// node:sqlite or better-sqlite3 -- which is also why the rewriter exists at all.
+// false here, and with @libsql/client anywhere: the JS client has no create_function on any
+// transport, and load_extension is refused. registerUdfs() returns true only on engines that
+// expose one, such as node:sqlite or better-sqlite3 (bun:sqlite 1.4 has no function() API) --
+// which is also why the rewriter exists at all.
 console.log('\n-- 6. registerUdfs() on Turso:', jev.registerUdfs());
 
 // Same reason the pg-jev per-row path cannot be used here: there is no jev() function to

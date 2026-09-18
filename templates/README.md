@@ -5,8 +5,8 @@ Both follow the same split: **JavaScript talks to TypeSafe, SQLite does the scan
 
 | Template | Engine | Deploy path | Rewritten SQL | UDFs |
 | --- | --- | --- | --- | --- |
-| [`d1/`](./d1/README.md) | Cloudflare D1 + Workers | `wrangler d1 create/execute`, `wrangler deploy` | yes, required | no (`registerUdfs()` is a no-op) |
-| [`turso/`](./turso/README.md) | Turso / libSQL | `turso db create`, `turso db shell`, `turso db tokens create` | yes, the only path on Turso Cloud | no on Turso Cloud, yes on embedded libSQL and local SQLite |
+| [`d1/`](./d1/README.md) | Cloudflare D1 + Workers | `wrangler d1 create/execute`, `wrangler deploy` | yes, required | no (`registerUdfs()` returns `false` on D1) |
+| [`turso/`](./turso/README.md) | Turso / libSQL | `turso db create`, `turso db shell`, `turso db tokens create` | yes, required on Turso Cloud and through `@libsql/client` | no on Turso Cloud and through `@libsql/client`; only `node:sqlite` and `better-sqlite3` register UDFs (not `bun:sqlite` 1.4) |
 
 ## Why a rewritten SQL statement, and not a function call in SQL
 
@@ -64,12 +64,12 @@ bundle.
 | --- | --- | --- |
 | Bound parameters per statement | 100 | 32766 |
 | SQL statement size | ~100 KB | effectively unbounded |
-| User-defined SQL functions | no | no on Turso Cloud |
+| User-defined SQL functions | no | no, neither on Turso Cloud nor through `@libsql/client` |
 | Interactive transactions | no | `client.batch()` is one atomic transaction |
 | TEMP tables | n/a | rejected by sqld; sql-jev never uses them |
-| Query/API budget | 1000 D1 queries per Worker invocation | connection/plan dependent |
-| Database size | 10 GB | plan dependent |
-| Values above ~4 MB | not supported by D1 | may fail on Turso |
+| Query/API budget | 1,000 D1 queries per Worker invocation (Paid; 50 on Free) | connection/plan dependent |
+| Database size | 10 GB (paid) / 500 MB (free) | plan dependent |
+| Values above a few MB | not supported: D1 caps a string/BLOB/row at 2 MB | measured: 4 MB fine, 5 MB → `SQLITE_TOOBIG` |
 
 Warm large relations ahead of time (`jev.warm(relation, condition)`, or `POST /warm` on
 the D1 template) and rely on `jev_judgments` afterwards; then a request only pays for the

@@ -43,15 +43,73 @@ export interface Adapter {
   attachFunction?(name: string, fn: (...args: unknown[]) => unknown): boolean;
 }
 
-export function isSelect(sql: string): boolean {
-  const head = sql.trimStart().slice(0, 16).toLowerCase();
-  return (
-    head.startsWith('select') ||
-    head.startsWith('with') ||
-    head.startsWith('pragma') ||
-    head.startsWith('explain')
-  );
+const STATEMENT_VERBS = new Set([
+  'select', 'insert', 'update', 'delete', 'replace', 'values', 'pragma', 'explain', 'table',
+  'create', 'drop', 'alter', 'begin', 'commit', 'rollback', 'vacuum', 'analyze', 'attach',
+  'detach', 'reindex', 'savepoint', 'release', 'set',
+]);
+
+/**
+ * The statement's verb, skipping leading whitespace and `--` / block comments, and looking past a
+ * `WITH ... AS (...)` preamble. The first word of the string is NOT the verb: SQLite happily runs
+ * `WITH t AS (SELECT 1) DELETE FROM cities WHERE id > 0`, and a leading comment used to make the
+ * generator treat a SELECT as a write (the driver's rows were then dropped silently - a real P0).
+ */
+export function statementVerb(sql: string): string {
+  let depth = 0;
+  let sawWith = false;
+  for (const token of tokenize(sql)) {
+    if (token.kind === 'punct') {
+      if (token.value === '(') depth += 1;
+      else if (token.value === ')') depth -= 1;
+      continue;
+    }
+    if (depth > 0 || token.kind !== 'word') continue;
+    const word = token.value.toLowerCase();
+    if (!sawWith) {
+      if (word === 'with') {
+        sawWith = true;
+        continue;
+      }
+      return word;
+    }
+    // Inside the CTE preamble: the first verb at depth 0 ends it.
+    if (STATEMENT_VERBS.has(word)) return word;
+  }
+  return sawWith ? 'with' : '';
 }
+
+/** A top-level RETURNING, matched as a word so a literal containing "returning" cannot fool it. */
+function hasTopLevelReturning(sql: string): boolean {
+  let depth = 0;
+  for (const token of tokenize(sql)) {
+    if (token.kind === 'punct') {
+      if (token.value === '(') depth += 1;
+      else if (token.value === ')') depth -= 1;
+      continue;
+    }
+    if (depth === 0 && token.kind === 'word' && token.value.toLowerCase() === 'returning') {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * True when the driver must read rows back instead of just running the statement:
+ * SELECT/PRAGMA/EXPLAIN/VALUES/TABLE, and any INSERT/UPDATE/DELETE that ends in RETURNING (which
+ * used to be treated as a write, so `INSERT ... RETURNING id` returned [] while the row was written).
+ */
+export function returnsRows(sql: string): boolean {
+  const verb = statementVerb(sql);
+  if (verb === 'select' || verb === 'values' || verb === 'pragma' || verb === 'explain' || verb === 'table') {
+    return true;
+  }
+  return hasTopLevelReturning(sql);
+}
+
+/** Historical name for returnsRows(); the adapters use it to choose all() over run(). */
+export const isSelect = returnsRows;
 
 /** Rows may arrive as objects (most drivers) or as arrays with a columns list (libSQL). */
 export function rowObjects(
