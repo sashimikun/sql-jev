@@ -43,6 +43,13 @@ per Worker invocation on Paid (50 on Free), and no user-defined functions. Turso
 `create_function` and rejects `TEMP` tables. `test/d1.test.ts` runs against a fake binding that
 enforces those limits; keep it that way rather than asserting on behaviour that only works locally.
 
+## Docs style
+
+Docs follow the [i-have-adhd](https://github.com/ayghri/i-have-adhd/tree/main/skills/i-have-adhd)
+writing skill: lead with the action the reader can run, number multi-step work, no preamble and no
+recap, concrete numbers instead of "a bit of work", and at most five items per list. Reference
+tables (functions, settings, platform limits) stay complete - the shape changes, not the facts.
+
 ## Before opening a pull request
 
 ```bash
