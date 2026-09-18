@@ -22,6 +22,9 @@ jobs:
           node-version: 20
           registry-url: https://registry.npmjs.org
 
+      # Trusted publishing (OIDC) needs npm >= 11.5.1; Node 20 ships npm 10.
+      - run: npm install -g npm@latest
+
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun test
@@ -33,7 +36,15 @@ jobs:
           pkg=$(node -p "require('./package.json').version")
           test "$version" = "$pkg" || { echo "tag $version != package.json $pkg"; exit 1; }
 
-      - name: Publish to npm
+      # Preferred: configure a Trusted Publisher for this repo + release.yml on npmjs.com and set no
+      # secret at all. npm exchanges the workflow's OIDC token for a short-lived credential.
+      - name: Publish with trusted publishing (no stored token)
+        if: ${{ secrets.NPM_TOKEN == '' }}
+        run: npm publish --provenance --access public
+
+      # Fallback: a granular access token with "Bypass two-factor authentication" saved as NPM_TOKEN.
+      - name: Publish with NPM_TOKEN
+        if: ${{ secrets.NPM_TOKEN != '' }}
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
