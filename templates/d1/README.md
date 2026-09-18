@@ -29,11 +29,18 @@ costs zero API calls, and every Worker in every region reuses the same judgments
 ## Deploy
 
 Prerequisites: Node >= 18, the Wrangler CLI (or `npx wrangler`), a TypeSafe System One
-API key, and a checkout or package install of `sql-jev` next to this directory (the
-Worker imports `sql-jev`, and it is its only dependency).
+API key, and a `sql-jev` install reachable from this directory. The Worker imports
+`sql-jev` (`import { createJev } from 'sql-jev'`) and it is the only dependency, so Wrangler
+must resolve it while bundling.
+
+`sql-jev` is not on npm yet, so install it from a checkout: `npm view sql-jev` returning 404
+is expected until the first release, and without this step `wrangler deploy` fails with
+"Could not resolve sql-jev" before it uploads anything.
 
 ```bash
 cd templates/d1
+bun add file:../..            # or: npm install ../..   (path to the repository root)
+# once the package is published, `bun add sql-jev` replaces that line
 
 wrangler d1 create sql-jev                                   # 1. prints database_id
 # 2. paste that ID into wrangler.toml ([[d1_databases]] database_id)
@@ -45,6 +52,10 @@ wrangler secret put TYPESAFE_API_KEY                          # 5. your TypeSafe
 
 wrangler deploy                                               # 6. ship it
 ```
+
+Verified end to end against Cloudflare: with the local install in place, `wrangler deploy`
+bundles ~111 KiB, binds `env.DB`, and the deployed Worker answers `POST /query` for a
+condition whose judgments are already in D1 with `requests: 0` -- the edge reused the table.
 
 `sql/sql-jev.sql` is idempotent (`CREATE ... IF NOT EXISTS`, `INSERT OR IGNORE`), so
 running step 3 again is safe, and so is calling `await jev.schema()` from code -- the
