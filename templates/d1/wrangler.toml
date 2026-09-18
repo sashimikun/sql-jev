@@ -1,0 +1,41 @@
+# sql-jev on Cloudflare Workers + D1.
+#
+#   cd templates/d1
+#   wrangler d1 create sql-jev                                  # prints database_id -> paste below
+#   wrangler d1 execute sql-jev --remote --file=../../sql/sql-jev.sql
+#   wrangler secret put API_TOKEN                                # shared secret for this HTTP API
+#   wrangler secret put TYPESAFE_API_KEY                         # TypeSafe System One key
+#   wrangler deploy
+#
+# README.md in this directory has the full walkthrough and the curl examples.
+
+name = "sql-jev-worker"
+main = "worker.ts"
+compatibility_date = "2024-11-06"
+
+# sql-jev has zero runtime dependencies and uses only Web-standard fetch/TextEncoder, so
+# no compatibility flag, polyfill or nodejs_compat is needed.
+# compatibility_flags = ["nodejs_compat"]
+
+# Non-secret settings. Secrets are set with `wrangler secret put` and never live here.
+[vars]
+# Rows returned by POST /query when the statement has no LIMIT of its own (hard cap 1000).
+JEV_MAX_ROWS = "200"
+
+[[d1_databases]]
+# The name the Worker sees: env.DB, exactly what createJev({ d1: env.DB }) expects.
+binding = "DB"
+database_name = "sql-jev"
+# Replace with the id `wrangler d1 create sql-jev` printed.
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[observability]
+enabled = true
+
+# Local development (`wrangler dev`), with a local D1 instead of the remote one:
+#
+#   wrangler d1 execute sql-jev --local --file=../../sql/sql-jev.sql
+#   printf 'API_TOKEN="dev-token"\nTYPESAFE_API_KEY="ts_..."\n' > .dev.vars   # git-ignored
+#   wrangler dev
+#
+# Local and remote D1 are separate databases: apply sql/sql-jev.sql to both.

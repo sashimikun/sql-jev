@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+*.local.db
+*.local.db-*
+test/tmp/
+.DS_Store

@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    name: typecheck, tests, schema
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dev dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Tests (deterministic mock API, no credentials)
+        run: bun test
+
+      - name: src/schema.ts is in sync with sql/sql-jev.sql
+        run: bun run scripts/sync-schema.ts --check
+
+      - name: Build the package
+        run: bun run build
+
+      - name: The packaged schema applies with the sqlite3 CLI
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq sqlite3
+          rm -f /tmp/sql-jev.db
+          sqlite3 /tmp/sql-jev.db < sql/sql-jev.sql
+          sqlite3 /tmp/sql-jev.db "SELECT count(*) AS runs FROM jev_stats;"
+          sqlite3 /tmp/sql-jev.db "SELECT name FROM sqlite_master WHERE type='view' ORDER BY name;"
+
+      - name: The D1 worker template typechecks standalone
+        run: |
+          bunx tsc --noEmit --strict --target es2022 --module esnext \
+            --moduleResolution bundler --skipLibCheck templates/d1/worker.ts
+          bash -n templates/turso/deploy.sh

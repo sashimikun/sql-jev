@@ -1,0 +1,205 @@
+name: Deploy
+
+# Manual only: pick the engine, give the database a name, and this workflow applies
+# sql/sql-jev.sql and deploys the matching template.
+#
+#   Actions -> Deploy -> Run workflow -> target: turso | d1
+#
+# Secrets it expects (Settings -> Secrets and variables -> Actions):
+#   TURSO_API_TOKEN          Turso CLI token (turso auth api-tokens, or an org token)
+#   TYPESAFE_API_KEY         TypeSafe System One key, deployed as a Worker secret
+#   CLOUDFLARE_API_TOKEN     Workers + D1 permissions
+#   CLOUDFLARE_ACCOUNT_ID    Cloudflare account id
+#
+# Database names, URLs and minted tokens are never printed: tokens are masked with
+# ::add-mask:: and passed to later steps through $GITHUB_ENV.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Which engine to deploy
+        required: true
+        default: turso
+        type: choice
+        options:
+          - turso
+          - d1
+      database:
+        description: Database name (Turso database, or D1 database)
+        required: true
+        default: sql-jev
+      worker_name:
+        description: Worker name (d1 only)
+        required: false
+        default: sql-jev-worker
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.target }}-${{ inputs.database }}
+  cancel-in-progress: false
+
+jobs:
+  turso:
+    name: Turso / libSQL
+    if: ${{ inputs.target == 'turso' }}
+    runs-on: ubuntu-24.04
+    env:
+      TURSO_API_TOKEN: ${{ secrets.TURSO_API_TOKEN }}
+      TURSO_DATABASE: ${{ inputs.database }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Turso CLI
+        run: |
+          curl -sSfL https://get.tur.so/install.sh | bash
+          echo "$HOME/.turso" >> "$GITHUB_PATH"
+
+      - name: Check the Turso credentials
+        # The CLI reads TURSO_API_TOKEN from the environment, so no interactive login.
+        run: turso auth whoami
+
+      - name: Create the database (skipped when it already exists)
+        run: |
+          if turso db show "$TURSO_DATABASE" --url >/dev/null 2>&1; then
+            echo "database $TURSO_DATABASE already exists, keeping it"
+          else
+            turso db create "$TURSO_DATABASE"
+          fi
+
+      - name: Apply sql/sql-jev.sql
+        # Idempotent: CREATE ... IF NOT EXISTS plus INSERT OR IGNORE seeds.
+        run: turso db shell "$TURSO_DATABASE" < sql/sql-jev.sql
+
+      - name: Verify the schema
+        run: |
+          turso db shell "$TURSO_DATABASE" \
+            "SELECT key, value FROM jev_settings WHERE key IN ('version','model','threshold') ORDER BY key;"
+          turso db shell "$TURSO_DATABASE" \
+            "SELECT name FROM sqlite_master WHERE type = 'view' AND name LIKE 'jev%' ORDER BY name;"
+
+      - name: Report the connection URLs
+        # Safe to log: the URL is not a credential, the token is.
+        run: |
+          echo "TURSO_DATABASE_URL=$(turso db show "$TURSO_DATABASE" --url)"
+          echo "TURSO_HTTP_URL=$(turso db show "$TURSO_DATABASE" --http-url)"
+
+      - name: Mint an auth token for later steps
+        # Masked, and exported rather than printed. Store it in your own secret manager:
+        # a token shown in a CI log is a leaked token.
+        run: |
+          token="$(turso db tokens create "$TURSO_DATABASE")"
+          echo "::add-mask::$token"
+          url="$(turso db show "$TURSO_DATABASE" --url)"
+          {
+            echo "TURSO_DATABASE_URL=$url"
+            echo "TURSO_AUTH_TOKEN=$token"
+            echo "TYPESAFE_API_KEY=${{ secrets.TYPESAFE_API_KEY }}"
+          } >> "$GITHUB_ENV"
+
+      - name: Smoke test the deployed database
+        # No TypeSafe call here: it only proves the schema is queryable from CI.
+        run: |
+          turso db shell "$TURSO_DATABASE" "SELECT count(*) AS judgments FROM jev_judgments;"
+
+      # Next step for your application: deploy the service that uses
+      # createJev({ url: process.env.TURSO_DATABASE_URL, authToken: process.env.TURSO_AUTH_TOKEN,
+      #             apiKey: process.env.TYPESAFE_API_KEY }) with the two variables above.
+      # Turso has no user-defined SQL functions, so the rewriter inside jev.query()/
+      # jev.translate() is the only path there (jev.registerUdfs() is a no-op).
+
+  d1:
+    name: Cloudflare Workers + D1
+    if: ${{ inputs.target == 'd1' }}
+    runs-on: ubuntu-24.04
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      D1_DATABASE: ${{ inputs.database }}
+      WORKER_NAME: ${{ inputs.worker_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install wrangler
+        run: npm install --global wrangler@latest
+
+      - name: Install the Worker's only dependency (sql-jev)
+        # templates/d1/worker.ts does `import ... from 'sql-jev'`, so the package must be
+        # resolvable when wrangler bundles the Worker. Deploying from this checkout
+        # instead of the published package? Build it at the repo root (`npm run build`)
+        # and then `npm link sql-jev` inside templates/d1.
+        working-directory: templates/d1
+        run: npm install --no-audit --no-fund sql-jev@latest
+
+      - name: Create the D1 database if needed
+        run: wrangler d1 create "$D1_DATABASE" || echo "database $D1_DATABASE already exists"
+
+      - name: Point wrangler.toml at that database
+        # database_id is account-specific, so it is patched in CI rather than committed.
+        working-directory: templates/d1
+        run: |
+          db_id="$(wrangler d1 list --json | jq -r --arg name "$D1_DATABASE" '.[] | select(.name == $name) | .uuid' | head -n 1)"
+          if [ -z "$db_id" ] || [ "$db_id" = "null" ]; then
+            echo "could not resolve the database id for $D1_DATABASE" >&2
+            exit 1
+          fi
+          sed -i "s/^database_id = .*/database_id = \"$db_id\"/" wrangler.toml
+          grep -n '^database_id' wrangler.toml
+
+      - name: Apply sql/sql-jev.sql to the remote database
+        run: wrangler d1 execute "$D1_DATABASE" --remote --file=sql/sql-jev.sql
+
+      - name: Verify the schema
+        run: |
+          wrangler d1 execute "$D1_DATABASE" --remote \
+            --command "SELECT key, value FROM jev_settings WHERE key IN ('version','model','threshold') ORDER BY key;"
+
+      - name: Deploy the Worker
+        working-directory: templates/d1
+        run: |
+          set -o pipefail
+          wrangler deploy --name "$WORKER_NAME" 2>&1 | tee deploy.log
+          worker_url="$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' deploy.log | head -n 1 || true)"
+          if [ -n "$worker_url" ]; then
+            echo "WORKER_URL=$worker_url" >> "$GITHUB_ENV"
+          else
+            echo "wrangler printed no workers.dev URL; skipping the HTTP smoke test" >&2
+          fi
+
+      - name: Set the Worker secrets
+        # After the first deploy, so the Worker exists. `printf` keeps the value off argv
+        # and out of the log; neither secret is echoed.
+        working-directory: templates/d1
+        env:
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+        run: |
+          api_token="$(openssl rand -hex 32)"
+          echo "::add-mask::$api_token"
+          printf '%s' "$TYPESAFE_API_KEY" | wrangler secret put TYPESAFE_API_KEY --name "$WORKER_NAME"
+          printf '%s' "$api_token" | wrangler secret put API_TOKEN --name "$WORKER_NAME"
+          {
+            echo "API_TOKEN=$api_token"
+          } >> "$GITHUB_ENV"
+
+      - name: Smoke test the Worker
+        # GET / needs no auth; /stats proves the D1 binding, the schema and the secret are
+        # all in place. Both the API_TOKEN and the TypeSafe key stay masked.
+        run: |
+          if [ -z "${WORKER_URL:-}" ]; then
+            echo "no workers.dev URL was captured from the deploy output; skipping"
+            exit 0
+          fi
+          echo "service: $(curl -sSf "$WORKER_URL/")"
+          echo "stats:   $(curl -sSf -H "Authorization: Bearer $API_TOKEN" "$WORKER_URL/stats")"
+
+      - name: Where to go next
+        run: |
+          echo "Worker URL: ${WORKER_URL:-https://$WORKER_NAME.<your-subdomain>.workers.dev}"
+          echo "Local dev: cd templates/d1 && wrangler d1 execute $D1_DATABASE --local --file=../../sql/sql-jev.sql"
+          echo "Remember: D1 allows 100 bound parameters, ~100 KB of SQL and 1000 queries per invocation."
