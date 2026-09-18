@@ -52,10 +52,16 @@ export interface JevConfig {
 
 export const DEFAULT_API_URL = 'https://api.typesafe.ai/v1/systemone';
 
+/**
+ * Default model id. It is part of every judgment key (with KEY_FORMAT), so switching
+ * `model` re-judges instead of silently reusing answers produced by a different model.
+ */
+export const DEFAULT_MODEL = 'jev-latest';
+
 export function defaultConfig(): JevConfig {
   return {
     apiUrl: DEFAULT_API_URL,
-    model: 'jev-latest',
+    model: DEFAULT_MODEL,
     threshold: 0.5,
     batchSize: 40,
     concurrency: 6,

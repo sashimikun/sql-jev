@@ -56,7 +56,7 @@ export interface JevRunStats {
 /** jev-1.13 list price; output tokens are free. */
 export const USD_PER_INPUT_TOKEN = 0.042 / 1_000_000;
 
-export const JEV_VERSION = '0.1.0';
+export const JEV_VERSION = '0.2.0';
 
 export class JevError extends Error {
   constructor(message: string) {

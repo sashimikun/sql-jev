@@ -6,10 +6,59 @@
  * twice collapses to one judged set.
  */
 
+import { DEFAULT_MODEL } from './config.js';
 import { JevSqlError } from './types.js';
 
-/** Unit separator: cannot appear in a SQL string literal or a condition typed by a human. */
+/**
+ * Field separator of a judgment key, and the separator of the in-process mirror entry.
+ *
+ * It is NOT true that U+001F cannot reach a key: a SQL string literal may hold any byte except
+ * NUL, so a condition can contain one, and `model` comes from `jev_settings` / the env. The fields
+ * are escaped before they are joined, exactly because of that -- see `escapeKeyField()`.
+ */
 export const KEY_SEP = '\u001f';
+
+/**
+ * Longest condition/question a judgment key will carry (32 KiB).
+ *
+ * The key is inlined into the rewritten statement as a SQL literal, and it carries the condition
+ * verbatim, so the condition's length becomes the statement's length: measured today, a
+ * 100 000-character condition rewrites to a 100 221-character SELECT, and Cloudflare D1 rejects a
+ * statement over ~100 KB. That failure is not free: rows are sent to the model before the rewritten
+ * statement runs, so the money is spent and the user gets `D1_ERROR: SQL statement too long`.
+ * 32 KiB of condition keeps every call's contribution at about a third of the limit (32 989
+ * characters measured), so a statement can still hold several max-size calls.
+ */
+export const MAX_CONDITION_CHARS = 32 * 1024;
+
+/**
+ * Doubles every separator inside one key field, so a field can never contain an *unescaped* one.
+ *
+ * The key is a plain join, so an unescaped separator inside a field moves the field boundaries and
+ * makes the encoding ambiguous. Reproduced before this escape existed:
+ *
+ *   judgmentKey('noul', 'x\u001f\u001f1\u001fm', null, 'M')
+ *   judgmentKey('noul', 'x',                     null, 'm\u001f\u001f1\u001fM')
+ *
+ * both return `noul\u001fx\u001f\u001f1\u001fm\u001f\u001f1\u001fM`, so the second pair reads the
+ * first pair's answers: a forged cache entry. `condition` is user text, `options` is JSON-escaped
+ * already, and `model` comes from `jev_settings`/env, so two reachable fields could carry a
+ * separator.
+ *
+ * Doubling (rather than dropping or replacing the character) keeps the encoding injective -- a
+ * doubled separator is data, a single one is a boundary -- and leaves every separator-free field
+ * byte-identical. Keys for ordinary conditions therefore do not change, so this escape costs
+ * existing installations nothing. Brute-forced in test/key.dogfood.test.ts.
+ */
+function escapeKeyField(value: string): string {
+  return value.includes(KEY_SEP) ? value.split(KEY_SEP).join(KEY_SEP + KEY_SEP) : value;
+}
+
+/**
+ * Version of the question templates (the instructions/criteria sent to the model). Bump it when a
+ * template changes: it is part of every judgment key, so old answers stop matching and are re-judged.
+ */
+export const KEY_FORMAT = '1';
 
 /** How deep a row value may nest before we refuse it instead of recursing forever. */
 const MAX_ROW_DEPTH = 64;
@@ -114,24 +163,54 @@ export function canonicalJson(value: unknown): string {
 }
 
 /**
- * kind | condition | options, the unique identity of one judgment.
+ * kind | condition | options | format | model, the unique identity of one judgment.
  *
- * The two U+001F separators cannot be forged from the *options* side: those are JSON text, and
- * JSON escapes every control character, so a raw U+001F only ever appears inside `condition`.
- * The final separator is therefore the split point of the key, and distinct conditions keep
- * distinct keys. For the record: `['a\u001fb']` hashes to `["a\u001fb"]` -- escaped -- so it
- * cannot collide with any other pair either.
+ * Every field is run through `escapeKeyField()` first, so a separator inside a field (a condition
+ * from a hostile SQL string, a model id from `jev_settings`) cannot shift the field boundaries and
+ * forge another pair's key.
+ *
+ * `format` (KEY_FORMAT) is bumped whenever the question templates change, and `model` is the
+ * REQUESTED model (`jev-latest`, `jev-1.13.0`, ...). Both are in the key on purpose: a judgment
+ * made by another model, or by another prompt shape, is not an answer to today's question. Without
+ * them a model swap silently reuses the old values -- which is exactly what happens on engines whose
+ * cache is only session-scoped, where nobody notices until the results look wrong.
+ *
+ * Because the key carries the *requested* model and not the resolved one, changing what an alias
+ * like `jev-latest` points at does NOT invalidate anything: a table judged before the alias moved
+ * keeps serving those answers next to answers from the new version, all under one key. The resolved
+ * model is recorded (`jev_judgments.model`, `RunSummary.model`), so a mixed cache is visible with
+ * `SELECT model, count(*) FROM jev_judgments GROUP BY model`, and can be cleared with
+ * `DELETE FROM jev_judgments WHERE model <> '<the version you want>'`. Pin a concrete version in
+ * settings if the answer set must move with the server.
+ *
+ * The same asymmetry costs one re-judge in the other direction: `jev-latest` and the version it
+ * currently resolves to are two different keys, so switching between them judges every row again
+ * even though the same model answers. Measured live: `jev-latest` resolved to `jev-1.13.0`, and
+ * pinning `jev-1.13.0` judged all 5 rows of a 5-row table a second time.
+ *
+ * A condition longer than MAX_CONDITION_CHARS is refused here, before any API call, because the key
+ * is inlined into the rewritten statement (see MAX_CONDITION_CHARS).
  */
 export function judgmentKey(
   kind: string,
   condition: string,
   options: string[] | null | undefined,
+  model: string = DEFAULT_MODEL,
 ): string {
   if (condition.includes('\u0000')) {
     throw new JevSqlError('jev: NUL bytes are not supported in conditions or questions');
   }
+  if (condition.length > MAX_CONDITION_CHARS) {
+    throw new JevSqlError(
+      `jev: this condition is ${condition.length} characters long, above the ` +
+        `${MAX_CONDITION_CHARS}-character limit for a condition or question. The judgment key ` +
+        'carries the condition and is inlined into the rewritten statement, and Cloudflare D1 ' +
+        'rejects a statement over ~100 KB -- after the rows have already been sent to the model. ' +
+        'Pass the long text as a column of the relation and ask a short question about it.',
+    );
+  }
   const opts = options && options.length ? canonicalJson(options) : '';
-  return `${kind}${KEY_SEP}${condition}${KEY_SEP}${opts}`;
+  return [kind, condition, opts, KEY_FORMAT, model].map(escapeKeyField).join(KEY_SEP);
 }
 
 /** A single-quoted SQL string literal, safe for remote engines and parameter limits. */

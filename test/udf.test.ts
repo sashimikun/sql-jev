@@ -74,7 +74,7 @@ describe('jev* SQL functions', () => {
     expect(predicate('cities', 1, GERMANY, 0.95)).toBe(0);
     expect(sql.get('jev_prob')!('cities', 1, GERMANY)).toBe(0.9);
     expect(sql.get('jev_prob')!('cities', 2, GERMANY)).toBe(0.1);
-    expect(sql.get('jev_version')!()).toBe('0.1.0');
+    expect(sql.get('jev_version')!()).toBe('0.2.0');
     expect(String(sql.get('jev_stats')!())).toContain('"requests":');
     expect(sql.get('jev_cache_clear')!()).toBe(1);
     db.close();

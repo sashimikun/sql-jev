@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS jev_judgments (
   scope           TEXT    NOT NULL,           -- relation the row was read from ('@row' for ad-hoc JSON rows)
   row_ref         TEXT    NOT NULL,           -- rowid as text, or sha256(row_json) for ad-hoc rows
   row_hash        TEXT    NOT NULL,           -- sha256 of the canonical row JSON: staleness check
-  judgment_key    TEXT    NOT NULL,           -- kind + condition + options, see src/sql.ts
+  judgment_key    TEXT    NOT NULL,           -- kind + condition + options + format + model, see src/sql.ts
   kind            TEXT    NOT NULL,           -- noul | score | choice
   condition       TEXT    NOT NULL,           -- the natural-language condition or question
   options_json    TEXT,                       -- JSON array of levels/options, or NULL
@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS jev_settings (
 );
 
 INSERT OR IGNORE INTO jev_settings (key, value) VALUES
-  ('version',                  '0.1.0'),
+  ('version',                  '0.2.0'),
   ('api_key',                  ''),
   ('api_url',                  'https://api.typesafe.ai/v1/systemone'),
   ('model',                    'jev-latest'),
@@ -127,17 +127,20 @@ SELECT
   COALESCE((SELECT round(sum(input_tokens) * 0.042 / 1000000, 6) FROM jev_runs), 0) AS estimated_cost_usd;
 
 -- Which relation/condition pairs are already judged, and how stale they are.
+-- `model` is part of the grouping: the same condition judged by two models is two entries, not one
+-- doubled count.
 CREATE VIEW IF NOT EXISTS jev_cached AS
 SELECT
   scope,
   kind,
   condition,
   options_json,
+  model,
   count(*)          AS rows_judged,
   min(updated_at)   AS first_judged_at,
   max(updated_at)   AS last_judged_at
 FROM jev_judgments
-GROUP BY scope, kind, condition, options_json;
+GROUP BY scope, kind, condition, options_json, model;
 
 -- Parity with jev_version().
 CREATE VIEW IF NOT EXISTS jev_meta AS

@@ -567,7 +567,10 @@ function outputFor(fn: string, kind: JevKind): CallOutput {
 }
 
 /** Locates every jev* call and resolves relation, condition, options and threshold. */
-export function analyzeSql(sql: string): SqlAnalysis {
+export function analyzeSql(
+  sql: string,
+  analyzeOptions: { model?: string } = {},
+): SqlAnalysis {
   const tokens = tokenize(sql);
   const enclosing = enclosingScopes(tokens);
   const bindings = buildBindings(tokens, enclosing);
@@ -705,7 +708,7 @@ export function analyzeSql(sql: string): SqlAnalysis {
       condition,
       options,
       thresholdSql,
-      judgmentKey: judgmentKey(kind, condition, options),
+      judgmentKey: judgmentKey(kind, condition, options, analyzeOptions.model),
       start: tok.start,
       end: last.end,
       text: sql.slice(tok.start, last.end),

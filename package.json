@@ -1,6 +1,6 @@
 {
   "name": "sql-jev",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Ask your SQLite tables questions in plain language. SQL-lite port of pg-jev for Turso/libSQL and Cloudflare D1",
   "license": "MIT",
   "type": "module",

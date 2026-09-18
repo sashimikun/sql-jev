@@ -319,7 +319,7 @@ describe('libSQL adapter: scripts and batches', () => {
       expect(schemaObjects(db)).toContain(name);
     }
     expect(db.query("SELECT value FROM jev_settings WHERE key = 'version'").get()).toEqual({
-      value: '0.1.0',
+      value: '0.2.0',
     });
   });
 

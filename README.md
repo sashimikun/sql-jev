@@ -69,6 +69,28 @@ Levels and options take any of: `ARRAY['a','b']` · `json_array('a','b')` · `'[
 
 Views: `jev_stats` · `jev_cached` · `jev_coverage` · `jev_meta`.
 
+## Make it indexable — `tag()`
+
+```ts
+await jev.tag('people', 'the name is European');
+```
+
+Adds the column `jev_the_name_is_european` (0/1), fills it from the judgments, and indexes it. From
+then on no rewriter is involved:
+
+```sql
+SELECT * FROM people WHERE jev_the_name_is_european = 1;
+```
+
+| rows | through `jev()` | tagged column, indexed |
+| --- | --- | --- |
+| 5,000 | 3.6 ms | 0.02 ms |
+| 20,000 | 27 ms | 0.07 ms |
+
+In-memory SQLite, 20% selectivity, medians of three. `kind: 'score'` writes a REAL,
+`kind: 'choice'` writes TEXT, `threshold` moves the cut. Re-running judges only rows whose content
+changed. Columns named `jev_*` are reserved: they are never sent to the model.
+
 ## JS row API — for views, CTEs, JSON payloads (no rowid)
 
 ```ts
@@ -102,12 +124,17 @@ await jev.warm('people', 'the name is European');          // judge a whole tabl
 - **D1: 1000 queries per Worker invocation.** 5000 rows ≈ 37 — warm big tables on a schedule.
 - **First query spends, later ones are free.** Judgments persist in `jev_judgments`; a changed row
   is judged again.
+- **Changing `model` re-judges.** The requested model and the prompt format are part of every
+  judgment key, so `jev-latest` and `jev-1.13.0` never share answers. A change *inside* the
+  `jev-latest` alias is not visible to the key: pin the version to control that, or
+  `DELETE FROM jev_judgments` to force a fresh judgment.
 
 ## Develop
 
 ```bash
-bun install && bun test     # 144 tests, mock model, no credentials
+bun install && bun test     # 155 tests, mock model, no credentials
 bun run typecheck:all
+bun run bench/bench.ts      # numbers, no credentials; bench/RESULTS.md
 ```
 
 ## License

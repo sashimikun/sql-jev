@@ -115,10 +115,15 @@ export type {
   JudgeSpec,
   QueryResult,
   RunSummary,
+  TagOptions,
+  TagResult,
 } from './engine.js';
 export { analyzeSql, renderCall, rewriteSql, tokenize } from './rewrite.js';
 export type { AnalyzedCall, CallOutput, SqlAnalysis, Token } from './rewrite.js';
 export {
+  KEY_FORMAT,
+  KEY_SEP,
+  MAX_CONDITION_CHARS,
   canonicalJson,
   judgmentKey,
   quoteIdentifier,

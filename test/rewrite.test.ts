@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { analyzeSql, rewriteSql, tokenize } from '../src/index.ts';
+import { KEY_SEP, analyzeSql, judgmentKey, rewriteSql, tokenize } from '../src/index.ts';
 
 function plan(sql: string, threshold = 0.5) {
   const analysis = analyzeSql(sql);
@@ -16,7 +16,9 @@ describe('rewriting jev() for engines without user-defined functions', () => {
     expect(call.output).toBe('bool');
     expect(call.relation).toBe('people');
     expect(call.rowAlias).toBe('people');
-    expect(call.judgmentKey).toBe('noul\u001fthe name is European\u001f');
+    // The key carries the model and the question-template format, so it is derived, not literal.
+    expect(call.judgmentKey).toBe(judgmentKey('noul', 'the name is European'));
+    expect(call.judgmentKey).toContain('\u001fjev-latest');
     expect(sql).toContain(
       'FROM jev_judgments j WHERE j.scope = \'people\' ' +
         'AND j.row_ref = CAST("people"._rowid_ AS TEXT)',
@@ -59,7 +61,7 @@ describe('rewriting jev() for engines without user-defined functions', () => {
     expect(array.calls[0]!.kind).toBe('score');
     expect(array.calls[0]!.options).toEqual(['small', 'large']);
     expect(array.sql).toContain('SELECT j.score FROM jev_judgments j');
-    expect(array.sql).toContain("'score\u001fhow big?\u001f[\"small\",\"large\"]'");
+    expect(array.sql).toContain(`'${judgmentKey('score', 'how big?', ['small', 'large'])}'`);
 
     const normalised = plan("SELECT jev_score_norm(c, 'how big?', ARRAY['small','large']) FROM cities c");
     expect(normalised.sql).toContain('j.score / MAX(COALESCE(j.levels_count, 2) - 1, 1)');
@@ -87,12 +89,36 @@ describe('rewriting jev() for engines without user-defined functions', () => {
       "SELECT * FROM cities WHERE jev(cities, 'a') AND jev_prob(cities, 'b') > 0.5",
     );
     expect(calls.map((call) => call.fn)).toEqual(['jev', 'jev_prob']);
-    expect(sql.indexOf("'noul\u001fa\u001f'")).toBeLessThan(sql.indexOf("'noul\u001fb\u001f'"));
+    expect(sql.indexOf(`'${judgmentKey('noul', 'a')}'`)).toBeLessThan(
+      sql.indexOf(`'${judgmentKey('noul', 'b')}'`),
+    );
   });
 
   test('reports an unknown primitive exactly like pg-jev does', () => {
     expect(() => analyzeSql("SELECT jev_eval(c, 'q', 'bogus', NULL) FROM cities c"))
       .toThrow(/unknown kind 'bogus'/);
+  });
+
+  test('the key names the requested model, and the fragment inlines exactly that key', () => {
+    const pinned = analyzeSql("SELECT * FROM cities c WHERE jev(c, 'x')", { model: 'jev-1.13.0' });
+    expect(pinned.calls[0]!.judgmentKey).toBe(judgmentKey('noul', 'x', null, 'jev-1.13.0'));
+    const { sql } = plan("SELECT * FROM cities c WHERE jev(c, 'x')");
+    expect(sql).toContain(`'${judgmentKey('noul', 'x')}'`);
+    expect(sql).toContain('jev-latest');
+    // A different requested model is a different key, so it is a different lookup.
+    expect(plan("SELECT * FROM cities c WHERE jev(c, 'x')").sql).not.toContain('jev-1.13.0');
+  });
+
+  test('a crafted condition cannot carry a field boundary into the key', () => {
+    // Both pairs once produced the same key: the separator inside a field moved the boundaries, so
+    // the second pair read the first pair's answers. Every field is escaped now.
+    const forgedLeft = judgmentKey('noul', `x${KEY_SEP}${KEY_SEP}1${KEY_SEP}m`, null, 'M');
+    const forgedRight = judgmentKey('noul', 'x', null, `m${KEY_SEP}${KEY_SEP}1${KEY_SEP}M`);
+    expect(forgedLeft).not.toBe(forgedRight);
+    // An ordinary condition is untouched, so no existing judgment stops matching.
+    expect(judgmentKey('noul', 'the name is European')).toBe(
+      ['noul', 'the name is European', '', '1', 'jev-latest'].join(KEY_SEP),
+    );
   });
 
   test('tokenizer keeps literal and identifier spans intact', () => {

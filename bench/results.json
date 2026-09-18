@@ -1,0 +1,23 @@
+{
+  "when": "2026-09-18T05:05:02.604Z",
+  "mode": "mock",
+  "bun": "1.4.0",
+  "sqlite": "3.51.0",
+  "cases": [
+    {
+      "rows": 1000,
+      "cold_ms": 55.45,
+      "warm_ms": 9.41,
+      "tagged_ms": 0,
+      "scanned_ms": 0.48,
+      "requests_cold": 25,
+      "requests_warm": 0,
+      "matches": 200,
+      "writes": 1001,
+      "exec_calls": 10,
+      "max_statement_bytes": 759,
+      "input_tokens": 77551,
+      "cost_usd": 0.003257
+    }
+  ]
+}

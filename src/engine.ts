@@ -20,6 +20,7 @@
 
 import { apiKeyOf, postSystemOne } from './api.js';
 import {
+  DEFAULT_MODEL,
   resolveConfig,
   settingsFromRows,
   type JevConfig,
@@ -67,8 +68,9 @@ export function specFor(
   kind: JevKind,
   condition: string,
   options: string[] | null = null,
+  model: string = DEFAULT_MODEL,
 ): JudgeSpec {
-  return { kind, condition, options, key: makeJudgmentKey(kind, condition, options) };
+  return { kind, condition, options, key: makeJudgmentKey(kind, condition, options, model) };
 }
 
 interface Item {
@@ -102,12 +104,58 @@ interface MirrorEntry {
   raw: string;
 }
 
+export interface TagOptions {
+  /** Which primitive to store: 'noul' (0/1, default), 'score' (number) or 'choice' (text). */
+  kind?: JevKind;
+  /** Levels for score, options for choice. */
+  options?: string[] | null;
+  /** Column to write. Defaults to a slug of the condition, e.g. `jev_the_name_is_european`. */
+  column?: string;
+  /** noul only: probability at or above which the column is 1. Defaults to the configured threshold. */
+  threshold?: number;
+  /** Create an index on the column (default true): that is what makes the predicate cheap. */
+  index?: boolean;
+  /** score only: store the normalised 0..1 value instead of the raw level position. */
+  normalise?: boolean;
+}
+
+/** What `tag()` did. Extends RunSummary, so it also carries the API spend. */
+export interface TagResult extends RunSummary {
+  column: string;
+  sql_type: 'INTEGER' | 'REAL' | 'TEXT';
+  column_created: boolean;
+  index_created: boolean;
+  index_ddl: string;
+  rows_written: number;
+  threshold: number;
+  normalised: boolean;
+  /**
+   * A predicate to paste as-is: it selects the rows this column marks. `noul` is `"col" = 1`,
+   * `choice` is `"col" = '<the option with the most rows>'`, and `score` is at or above the middle
+   * level, because a score has no boolean cut (ORDER BY the column to rank the rows instead).
+   */
+  predicate: string;
+}
+
+/** Which judgment owns a tag column this process created, and how to name it in a message. */
+interface TagColumnOwner {
+  key: string;
+  label: string;
+}
+
 export interface QueryResult<T> {
   rows: T[];
   /** The SQL that actually ran, with every jev* call replaced by a jev_judgments lookup. */
   sql: string;
   run: RunSummary[];
 }
+
+/**
+ * Reserved column namespace for tag(). A relation's `jev_*` columns are never sent to the model and
+ * never hashed into a row id, so a tag column cannot influence a judgment and adding one does not
+ * invalidate the judgments of every row in the table.
+ */
+const TAG_COLUMN_PREFIX = /^jev_/i;
 
 const ROW_REF_COLUMN = '__jev_row_ref__';
 const AD_HOC_SCOPE = '@row';
@@ -176,7 +224,9 @@ function runSummary(
  */
 const UPSERT_HEAD =
   'INSERT INTO jev_judgments (scope, row_ref, row_hash, judgment_key, kind, condition, ' +
-  'options_json, answer_json, prob, label, score, levels_count, confidence, model) VALUES ';
+  'options_json, answer_json, prob, label, score, levels_count, confidence, model) VALUES ';/** Columns in one jev_judgments upsert; the parameter count per row. */
+const UPSERT_COLUMNS = 14;
+
 const UPSERT_TAIL =
   ' ON CONFLICT(scope, row_ref, judgment_key) DO UPDATE SET ' +
   'row_hash = excluded.row_hash, answer_json = excluded.answer_json, prob = excluded.prob, ' +
@@ -209,6 +259,15 @@ export class Jev {
   private counters: JevRunStats = emptyRunStats();
   /** In-process mirror of jev_judgments, the GD equivalent. Key: scope|rowRef|judgmentKey. */
   private memory = new Map<string, MirrorEntry>();
+  /**
+   * Tag columns this process already created or confirmed, so the probe runs once per column. The
+   * value is the judgment that owns the column, so a second condition that slugs to the same
+   * default name is refused instead of silently overwriting the first one's values. It is a cache,
+   * never a fact: see the retry in tag().
+   */
+  private readonly tagColumns = new Map<string, TagColumnOwner>();
+  /** Tag columns whose declared type this process already compared with the type tag() writes. */
+  private readonly checkedTagTypes = new Set<string>();
 
   constructor(options: JevOptions) {
     const { adapter, loadSettings, ...overrides } = options;
@@ -221,6 +280,18 @@ export class Jev {
   // ------------------------------------------------------------------ lifecycle
 
   /** Loads jev_settings so the database and the process agree on threshold, model, batching. */
+  /**
+   * A judgment spec whose key carries THIS engine's requested model, so the SQL path (which asks
+   * the rewriter for a key) and the JS row API (which builds specs here) always agree.
+   */
+  private spec(
+    kind: JevKind,
+    condition: string,
+    options: string[] | null = null,
+  ): JudgeSpec {
+    return specFor(kind, condition, options, this.config.model);
+  }
+
   async ready(): Promise<this> {
     if (this.shouldLoadSettings && !this.settingsLoaded) {
       this.settingsLoaded = true;
@@ -297,7 +368,7 @@ export class Jev {
   ): Promise<T[]> {
     const threshold = options.threshold ?? this.config.threshold;
     const kind = options.kind ?? 'noul';
-    const spec = specFor(kind, condition, options.options ?? null);
+    const spec = this.spec(kind, condition, options.options ?? null);
     const answers = await this.judgeArray(spec, rows as Record<string, unknown>[]);
     return rows.filter((_row, index) => {
       const answer = answers[index];
@@ -314,12 +385,12 @@ export class Jev {
     rows: T[],
     condition: string,
   ): Promise<(T & { jev_prob: number })[]> {
-    const answers = await this.judgeArray(specFor('noul', condition), rows as Record<string, unknown>[]);
+    const answers = await this.judgeArray(this.spec('noul', condition), rows as Record<string, unknown>[]);
     return rows.map((row, index) => ({ ...row, jev_prob: answerProb(answers[index]) ?? -1 }));
   }
 
   async prob(rows: Record<string, unknown>[], condition: string): Promise<number[]> {
-    const answers = await this.judgeArray(specFor('noul', condition), rows);
+    const answers = await this.judgeArray(this.spec('noul', condition), rows);
     return answers.map((answer) => answerProb(answer) ?? -1);
   }
 
@@ -328,7 +399,7 @@ export class Jev {
     question: string,
     levels: string[],
   ): Promise<(number | null)[]> {
-    const spec = specFor('score', question, levels);
+    const spec = this.spec('score', question, levels);
     const answers = await this.judgeArray(spec, rows);
     return answers.map((answer) => answerScore(answer));
   }
@@ -338,7 +409,7 @@ export class Jev {
     question: string,
     levels: string[],
   ): Promise<(number | null)[]> {
-    const spec = specFor('score', question, levels);
+    const spec = this.spec('score', question, levels);
     const answers = await this.judgeArray(spec, rows);
     return answers.map((answer) => scoreNorm(answerScore(answer), answerLevelsCount(answer, levels)));
   }
@@ -348,7 +419,7 @@ export class Jev {
     question: string,
     options: string[],
   ): Promise<(string | null)[]> {
-    const spec = specFor('choice', question, options);
+    const spec = this.spec('choice', question, options);
     const answers = await this.judgeArray(spec, rows);
     return answers.map((answer) => answerChoice(answer));
   }
@@ -359,7 +430,7 @@ export class Jev {
     kind: JevKind,
     options: string[] | null,
   ): Promise<(number | null)[]> {
-    const spec = specFor(kind, question, options);
+    const spec = this.spec(kind, question, options);
     const answers = await this.judgeArray(spec, rows);
     return answers.map((answer) => answerConfidence(answer));
   }
@@ -370,7 +441,7 @@ export class Jev {
     kind: JevKind = 'noul',
     options: string[] | null = null,
   ): Promise<(JevAnswer | null)[]> {
-    const spec = specFor(kind, question, options);
+    const spec = this.spec(kind, question, options);
     const answers = await this.judgeArray(spec, rows);
     return answers.map((answer) => answer ?? null);
   }
@@ -386,7 +457,7 @@ export class Jev {
    */
   async plan(sql: string): Promise<QueryResult<never> & { calls: AnalyzedCall[] }> {
     await this.ready();
-    const analysis = analyzeSql(sql);
+    const analysis = analyzeSql(sql, { model: this.config.model });
     if (analysis.calls.length === 0) {
       return { sql, calls: [], rows: [], run: [] };
     }
@@ -414,7 +485,7 @@ export class Jev {
         groups.set(key, {
           relation: call.relation,
           relationSql: call.relationSql,
-          spec: specFor(call.kind, call.condition, call.options),
+          spec: this.spec(call.kind, call.condition, call.options),
         });
       }
     }
@@ -422,12 +493,17 @@ export class Jev {
     for (const group of groups.values()) {
       run.push(await this.warmRelation(group.relation, group.relationSql, group.spec, budget));
     }
-    return {
-      sql: rewriteSql(sql, analysis.calls, this.config.threshold),
-      calls: analysis.calls,
-      rows: [],
-      run,
-    };
+    const rewritten = rewriteSql(sql, analysis.calls, this.config.threshold);
+    // Refuse before running anything: D1 refuses statements over ~100 KB, and paying for the
+    // judgments first only to fail at exec() is the worst order.
+    const maxBytes = this.adapter.capabilities.maxStatementBytes;
+    if (maxBytes > 0 && rewritten.length > maxBytes) {
+      throw new JevError(
+        `jev: the rewritten statement is ${rewritten.length} characters, above this engine's ` +
+          `${maxBytes}-character limit. Shorten the condition, or use fewer jev() calls per query.`,
+      );
+    }
+    return { sql: rewritten, calls: analysis.calls, rows: [], run };
   }
 
   /** Runs the statement with every jev* call translated, after warming the judgments. */
@@ -485,9 +561,222 @@ export class Jev {
   ): Promise<RunSummary> {
     await this.ready();
     this.requireSchema();
-    const spec = specFor(options.kind ?? 'noul', condition, options.options ?? null);
+    const spec = this.spec(options.kind ?? 'noul', condition, options.options ?? null);
     // warm() is a statement of its own, so it gets its own budget (see newStatementBudget).
     return this.warmRelation(relation, relationSqlFor(relation), spec, newStatementBudget());
+  }
+
+  // ------------------------------------------------------------------ tag()
+
+  /**
+   * Materialise a judgment into a real column, so the predicate becomes plain, indexable SQL.
+   *
+   *   await jev.tag('people', 'the name is European')
+   *   // -> column jev_the_name_is_european, 0/1, indexed
+   *   SELECT * FROM people WHERE jev_the_name_is_european = 1
+   *
+   * That last query is an index lookup: no rewriter, no correlated subquery, no SDK, and it works
+   * from any client -- including views, CTEs and engines that never heard of this library.
+   *
+   * Re-running is cheap and safe: only rows whose *content* changed are judged again, and the
+   * UPDATE leaves rows with no judgment untouched (`ELSE <column>`).
+   */
+  async tag(relation: string, condition: string, tagOptions: TagOptions = {}): Promise<TagResult> {
+    await this.ready();
+    this.requireSchema();
+    const kind = tagOptions.kind ?? 'noul';
+    const spec = this.spec(kind, condition, tagOptions.options ?? null);
+    const column = tagOptions.column ?? defaultColumnFor(condition, kind);
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(column)) {
+      throw new JevError(
+        `jev: '${column}' is not a usable column name (letters, digits and underscore only)`,
+      );
+    }
+    const threshold = tagOptions.threshold ?? this.config.threshold;
+    const normalise = kind === 'score' ? (tagOptions.normalise ?? false) : false;
+    const sqlType: TagResult['sql_type'] =
+      kind === 'noul' ? 'INTEGER' : kind === 'choice' ? 'TEXT' : 'REAL';
+    const relationSql = relationSqlFor(relation);
+    const seen = `${relationSql}\u0000${column}`;
+    const owner: TagColumnOwner = { key: spec.key, label: describeSpec(spec) };
+    // A default column name is a slug of the condition, so two different conditions collide as soon
+    // as they differ past the 40th slug character ('the price is too high today' / '... tomorrow').
+    // The column would then hold the answer to whichever condition ran last, so the second one is
+    // refused -- before the read-ahead and the model call, so a refused tag spends nothing. An
+    // explicit `column:` is the caller saying "I know", and is always allowed.
+    const currentOwner = this.tagColumns.get(seen);
+    if (
+      currentOwner !== undefined &&
+      currentOwner.key !== spec.key &&
+      tagOptions.column === undefined
+    ) {
+      throw new JevError(
+        `jev: column "${column}" on ${relationSql} is the default tag column for ${currentOwner.label}, ` +
+          'not for this judgment, and one column holds one judgment. Two conditions that slug to ' +
+          "the same name would overwrite each other; pass { column: '<name>' } to write this one " +
+          'into its own column.',
+      );
+    }
+
+    const { items, truncated } = await this.readRelation(relationSql);
+    if (truncated) this.handlePrefetchOverflow(relation);
+    const { answers, judged, alreadyJudged } = await this.ensure(
+      spec,
+      relation,
+      items,
+      newStatementBudget(),
+    );
+    const summary = runSummary(relation, spec, judged, alreadyJudged);
+    if (judged.rows > 0) {
+      this.notice(
+        `jev: tag ${column} -> judged ${judged.rows} row${judged.rows === 1 ? '' : 's'} of ` +
+          `${relation} in ${judged.requests} request${judged.requests === 1 ? '' : 's'}, ` +
+          `${judged.tokens} input tokens (≈$${summary.estimated_cost_usd.toFixed(4)})`,
+      );
+    }
+    if (this.config.persistJudgments) await this.logRun(summary);
+
+    const updates = buildTagUpdates(
+      relationSql,
+      column,
+      items,
+      answers,
+      spec,
+      threshold,
+      normalise,
+      this.adapter.capabilities.maxBoundParams,
+    );
+    const rowsPerStatement = Math.max(
+      1,
+      Math.floor(this.adapter.capabilities.maxBoundParams / TAG_PARAMS_PER_ROW),
+    );
+    const indexName = `${relation.replace(/[^A-Za-z0-9_]/g, '_')}_${column}_idx`;
+    const indexDdl =
+      `CREATE INDEX IF NOT EXISTS ${quoteIdentifier(indexName)} ` +
+      `ON ${relationSql} (${quoteIdentifier(column)})`;
+    const wantsIndex = tagOptions.index ?? true;
+    const write = async (): Promise<void> => {
+      if (updates.length > 0) await this.executeWriteStatements(updates, rowsPerStatement);
+      if (wantsIndex) await this.adapter.exec(indexDdl);
+    };
+
+    let columnCreated = await this.ensureColumn(relationSql, column, sqlType, owner);
+    try {
+      await write();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/no such column/i.test(message)) throw error;
+      // "This process already confirmed the column" is a cache, not a fact: `ALTER TABLE ... DROP
+      // COLUMN`, a table rebuild in a migration (how D1 and Turso reshape a table) or another
+      // process removes the column behind us. The answers are already stored, so re-create the
+      // column and write again rather than fail a tag whose input and judgments are both good.
+      this.tagColumns.delete(seen);
+      this.checkedTagTypes.delete(seen);
+      columnCreated =
+        (await this.ensureColumn(relationSql, column, sqlType, owner)) || columnCreated;
+      await write();
+    }
+    const indexCreated = wantsIndex;
+
+    const quoted = quoteIdentifier(column);
+    const written: (number | string)[] = [];
+    for (const item of items) {
+      const value = tagValue(answers.get(item.rowRef), spec, threshold, normalise);
+      if (value !== undefined) written.push(value);
+    }
+    const predicate = tagPredicate(kind, quoted, written, spec.options, normalise);
+    return {
+      ...summary,
+      column,
+      sql_type: sqlType,
+      column_created: columnCreated,
+      index_created: indexCreated,
+      index_ddl: indexDdl,
+      rows_written: updates.reduce((total, statement) => total + statement.params.length, 0) / TAG_PARAMS_PER_ROW,
+      threshold,
+      normalised: normalise,
+      predicate,
+    };
+  }
+
+  /**
+   * Adds the tag column when it is missing; a no-op otherwise.
+   *
+   * The probe is a zero-row UPDATE, not `SELECT "col" FROM t LIMIT 0`. SQLite's double-quoted
+   * string fallback makes that SELECT succeed for a column that does not exist (the unknown name is
+   * read as a string literal), so it cannot distinguish the two cases -- and the failure then shows
+   * up later as `no such column` from the write. A write statement always resolves the name.
+   *
+   * The probe and the ALTER are two round trips on libSQL/Turso and D1, so two tag() calls for the
+   * same new column can both find it missing and both ALTER. The loser sees `duplicate column name`
+   * for a column that now exists and holds the same answers: that is success, not an error.
+   */
+  private async ensureColumn(
+    relationSql: string,
+    column: string,
+    sqlType: TagResult['sql_type'],
+    owner: TagColumnOwner,
+  ): Promise<boolean> {
+    const seen = `${relationSql}\u0000${column}`;
+    if (this.tagColumns.has(seen)) return false;
+    const quoted = quoteIdentifier(column);
+    let missing = false;
+    try {
+      await this.adapter.query(`UPDATE ${relationSql} SET ${quoted} = ${quoted} WHERE 0`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/no such column/i.test(message)) throw error;
+      missing = true;
+    }
+    let created = false;
+    if (missing) {
+      try {
+        await this.adapter.exec(`ALTER TABLE ${relationSql} ADD COLUMN ${quoted} ${sqlType}`);
+        created = true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!/duplicate column name/i.test(message)) throw error;
+        created = false;
+      }
+    }
+    this.tagColumns.set(seen, owner);
+    if (!created) await this.noticeTagColumnType(relationSql, column, sqlType, seen);
+    return created;
+  }
+
+  /**
+   * Says so when the column already exists with a declared type that cannot hold the tag the way
+   * the kind promises: TEXT affinity stores a noul tag as the string '1', so a client reading the
+   * column back gets '1' where TagResult.sql_type promised a number. One PRAGMA per column per
+   * process, and never fatal -- SQLite compares across the two affinities, so `"col" = 1` still
+   * selects the right rows and refusing the tag would break working code.
+   */
+  private async noticeTagColumnType(
+    relationSql: string,
+    column: string,
+    sqlType: TagResult['sql_type'],
+    seen: string,
+  ): Promise<void> {
+    if (this.checkedTagTypes.has(seen)) return;
+    this.checkedTagTypes.add(seen);
+    let declared: string;
+    try {
+      const rows = await this.adapter.query<Record<string, unknown>>(
+        `SELECT name, type FROM pragma_table_info(${relationSql})`,
+      );
+      const found = rows.find((row) => String(row['name']) === column);
+      if (!found) return;
+      declared = String(found['type'] ?? '');
+    } catch {
+      return; // advisory only: an engine that refuses the pragma must not fail the tag
+    }
+    if (!columnTypeMismatch(sqlType, declared)) return;
+    this.notice(
+      `jev: tag column "${column}" on ${relationSql} is declared ${declared || 'with no type'}, ` +
+        `and SQLite's ${columnAffinity(declared)} affinity stores ${sqlType} tags as ` +
+        `${sqlType === 'TEXT' ? 'numbers when an option looks numeric' : 'text'}, not as the ` +
+        `${sqlType} TagResult.sql_type promises. Declare it ${sqlType}, or pass another column.`,
+    );
   }
 
   // ------------------------------------------------------------------ user-defined functions
@@ -549,42 +838,42 @@ export class Jev {
     };
 
     attach('jev', (scope, rowRef, condition, threshold) => {
-      const spec = specFor('noul', String(condition));
+      const spec = this.spec('noul', String(condition));
       const answer = lookup(String(scope), asRef(rowRef), spec);
       const limit = typeof threshold === 'number' ? threshold : this.config.threshold;
       return (answerProb(answer ?? undefined) ?? -1) >= limit ? 1 : 0;
     });
     attach('jev_prob', (scope, rowRef, condition) => {
-      const answer = lookup(String(scope), asRef(rowRef), specFor('noul', String(condition)));
+      const answer = lookup(String(scope), asRef(rowRef), this.spec('noul', String(condition)));
       return answerProb(answer ?? undefined) ?? -1;
     });
     attach('jev_score', (scope, rowRef, question, levels) => {
-      const spec = specFor('score', String(question), parseOptions(levels));
+      const spec = this.spec('score', String(question), parseOptions(levels));
       const answer = lookup(String(scope), asRef(rowRef), spec);
       return answerScore(answer ?? undefined) ?? -1;
     });
     attach('jev_score_norm', (scope, rowRef, question, levels) => {
       const options = parseOptions(levels);
-      const spec = specFor('score', String(question), options);
+      const spec = this.spec('score', String(question), options);
       const answer = lookup(String(scope), asRef(rowRef), spec);
       const score = answerScore(answer ?? undefined);
       if (score === null) return -1;
       return scoreNorm(score, answerLevelsCount(answer ?? undefined, options)) ?? -1;
     });
     attach('jev_choice', (scope, rowRef, question, options) => {
-      const spec = specFor('choice', String(question), parseOptions(options));
+      const spec = this.spec('choice', String(question), parseOptions(options));
       const answer = lookup(String(scope), asRef(rowRef), spec);
       return answerChoice(answer ?? undefined) ?? '';
     });
     attach('jev_confidence', (scope, rowRef, question, kind, options) => {
       const primitive = String(kind).toLowerCase() as JevKind;
-      const spec = specFor(primitive, String(question), parseOptions(options));
+      const spec = this.spec(primitive, String(question), parseOptions(options));
       const answer = need(String(scope), asRef(rowRef), spec);
       return answerConfidence(answer);
     });
     attach('jev_eval', (scope, rowRef, question, kind, options) => {
       const primitive = (kind === null || kind === undefined ? 'noul' : String(kind).toLowerCase()) as JevKind;
-      const spec = specFor(primitive, String(question), parseOptions(options));
+      const spec = this.spec(primitive, String(question), parseOptions(options));
       return JSON.stringify(need(String(scope), asRef(rowRef), spec));
     });
     attach('jev_version', () => JEV_VERSION);
@@ -678,6 +967,10 @@ export class Jev {
         const row: Record<string, unknown> = {};
         for (const [key, value] of Object.entries(raw)) {
           if (key === ROW_REF_COLUMN) continue;
+          // Reserved namespace: a `jev_*` column is a tag written by tag(). Sending it would feed a
+          // previous judgment back to the model as input, and adding one would change every row's
+          // hash and re-judge the whole table for nothing. See TAG_COLUMN_PREFIX.
+          if (TAG_COLUMN_PREFIX.test(key)) continue;
           row[key] = value;
         }
         items.push({
@@ -1028,7 +1321,7 @@ export class Jev {
       }
       return;
     }
-    const columns = 14;
+    const columns = UPSERT_COLUMNS;
     const perStatement = Math.max(1, Math.floor(this.adapter.capabilities.maxBoundParams / columns));
     const sql = `${UPSERT_HEAD}(${new Array(columns).fill('?').join(', ')})${UPSERT_TAIL}`;
     const statements: { sql: string; params: unknown[] }[] = [];
@@ -1061,12 +1354,33 @@ export class Jev {
       });
     }
     if (statements.length === 0) return;
+    await this.executeWriteStatements(statements, perStatement);
+  }
+
+  /**
+   * The one write path: script packing where the engine accepts multi-statement exec() (D1), a
+   * batched call where it accepts one (libSQL), a plain loop where it accepts neither.
+   * `rowsPerStatement` is how many rows one statement carries, so chunking respects the engine's
+   * bound-parameter limit.
+   */
+  private async executeWriteStatements(
+    statements: { sql: string; params: unknown[] }[],
+    rowsPerStatement: number,
+  ): Promise<void> {
     const caps = this.adapter.capabilities;
-    if (caps.multiStatementExec && caps.maxStatementBytes > 0) {
-      await this.persistAsScript(statements, caps.maxStatementBytes);
+    const first = statements[0];
+    // The literal script packer rebuilds each statement from its parameters, so it is only valid
+    // for the uniform upsert it was written for. Anything else (tag's UPDATEs) goes through the
+    // normal path: packing them would emit a different statement than the caller asked for.
+    const packable =
+      first !== undefined &&
+      first.params.length === UPSERT_COLUMNS &&
+      statements.every((statement) => statement.sql === first.sql);
+    if (packable && caps.multiStatementExec && caps.maxStatementBytes > 0) {
+      await this.packUpsertScript(statements, caps.maxStatementBytes);
       return;
     }
-    const chunkSize = Math.max(1, perStatement);
+    const chunkSize = Math.max(1, rowsPerStatement);
     const chunks: { sql: string; params: unknown[] }[][] = [];
     for (let i = 0; i < statements.length; i += chunkSize) {
       chunks.push(statements.slice(i, i + chunkSize));
@@ -1091,10 +1405,18 @@ export class Jev {
    * (100+ rows) and 1000 queries per Worker invocation, so a script beats parameters there.
    * Partial writes are harmless: every statement is an idempotent upsert.
    */
-  private async persistAsScript(
+  private async packUpsertScript(
     statements: { sql: string; params: unknown[] }[],
     maxStatementBytes: number,
   ): Promise<void> {
+    for (const statement of statements) {
+      if (statement.params.length !== UPSERT_COLUMNS) {
+        throw new JevError(
+          `jev: internal error: the script packer got a statement with ${statement.params.length} ` +
+            `parameters instead of ${UPSERT_COLUMNS}; it would have written the wrong values`,
+        );
+      }
+    }
     const limit = Math.max(1024, Math.floor(maxStatementBytes * 0.8));
     let buffer: string[] = [];
     let size = 0;
@@ -1163,6 +1485,158 @@ export class Jev {
  */
 function memoryKey(scope: string, rowRef: string, judgmentKeyValue: string): string {
   return JSON.stringify([scope, rowRef, judgmentKeyValue]);
+}
+
+// ------------------------------------------------------------------ tag()
+
+/** Bound parameters one tag UPDATE carries per row: rowRef in the CASE, the value, rowRef in IN. */
+const TAG_PARAMS_PER_ROW = 3;
+
+/** Column name for a condition that did not get one: 'the name is European' -> jev_the_name_is_european. */
+function defaultColumnFor(condition: string, kind: JevKind): string {
+  const slug = condition
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40)
+    .replace(/_+$/g, '');
+  const suffix = kind === 'noul' ? '' : `_${kind}`;
+  return `jev_${slug || 'judged'}${suffix}`;
+}
+
+/** Names a judgment in a message: 'noul "the name is European" over (europe, asia)'. */
+function describeSpec(spec: JudgeSpec): string {
+  const options = spec.options ? ` over (${spec.options.join(', ')})` : '';
+  return `${spec.kind} "${spec.condition}"${options}`;
+}
+
+/**
+ * The predicate to hand back: it has to run as-is and select the rows the column really marks, so
+ * it is derived from the values that were just written.
+ *
+ *   noul   -> "col" = 1
+ *   choice -> "col" = 'europe'   the option with the most rows (the first option when nothing was
+ *                                written, e.g. on an empty table)
+ *   score  -> "col" >= 1         the middle level for raw positions, 0.5 when normalised: a score
+ *                                has no boolean cut, and ORDER BY the column ranks the rows
+ */
+function tagPredicate(
+  kind: JevKind,
+  quotedColumn: string,
+  written: (number | string)[],
+  options: string[] | null,
+  normalise: boolean,
+): string {
+  if (kind === 'noul') return `${quotedColumn} = 1`;
+  if (kind === 'choice') {
+    const counts = new Map<string, number>();
+    for (const value of written) {
+      const key = String(value);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    let common: string | undefined;
+    let most = 0;
+    for (const [value, count] of counts) {
+      if (count > most) {
+        common = value;
+        most = count;
+      }
+    }
+    return `${quotedColumn} = ${quoteLiteral(common ?? options?.[0] ?? '')}`;
+  }
+  const levels = options ? options.length : 0;
+  const middle = normalise ? 0.5 : Math.max((levels - 1) / 2, 0.5);
+  return `${quotedColumn} >= ${middle}`;
+}
+
+/**
+ * SQLite column affinity, per https://sqlite.org/datatype3.html#affinity_name_examples: the
+ * declared type decides how a value is stored, whatever the value is.
+ */
+function columnAffinity(declared: string): 'INTEGER' | 'TEXT' | 'BLOB' | 'REAL' | 'NUMERIC' {
+  const type = declared.toUpperCase();
+  if (type.includes('INT')) return 'INTEGER';
+  if (type.includes('CHAR') || type.includes('CLOB') || type.includes('TEXT')) return 'TEXT';
+  if (type.includes('BLOB') || type.trim() === '') return 'BLOB';
+  if (type.includes('REAL') || type.includes('FLOA') || type.includes('DOUB')) return 'REAL';
+  return 'NUMERIC';
+}
+
+/**
+ * Whether a column declared like this changes the type the tag promises: a noul or score tag in a
+ * TEXT column is stored as the string '1' or '1.0', and a choice tag in a numeric column has its
+ * numeric-looking options converted to numbers ('2024' becomes 2024). INTEGER, REAL, NUMERIC and
+ * undecorated columns hold integers and reals as they are, so they are never a mismatch.
+ */
+function columnTypeMismatch(sqlType: TagResult['sql_type'], declared: string): boolean {
+  const affinity = columnAffinity(declared);
+  if (sqlType === 'TEXT') {
+    return affinity === 'INTEGER' || affinity === 'REAL' || affinity === 'NUMERIC';
+  }
+  return affinity === 'TEXT';
+}
+
+/**
+ * The value a judged row gets in its column. `undefined` means "leave the column alone": a row the
+ * model could not score must not overwrite a value that was fine before with NULL.
+ */
+function tagValue(
+  answer: JevAnswer | undefined,
+  spec: JudgeSpec,
+  threshold: number,
+  normalise: boolean,
+): number | string | undefined {
+  if (!answer) return undefined;
+  if (spec.kind === 'noul') {
+    const prob = answerProb(answer);
+    if (prob === null) return undefined;
+    return prob >= threshold ? 1 : 0;
+  }
+  if (spec.kind === 'choice') {
+    return answerChoice(answer) ?? undefined;
+  }
+  const score = answerScore(answer);
+  if (score === null) return undefined;
+  return normalise ? (scoreNorm(score, answerLevelsCount(answer, spec.options)) ?? score) : score;
+}
+
+/** One UPDATE per chunk: CASE _rowid_ WHEN ? THEN ? ... ELSE <column> END WHERE _rowid_ IN (...). */
+function buildTagUpdates(
+  relationSql: string,
+  column: string,
+  items: Item[],
+  answers: Map<string, JevAnswer>,
+  spec: JudgeSpec,
+  threshold: number,
+  normalise: boolean,
+  maxBoundParams: number,
+): { sql: string; params: unknown[] }[] {
+  const perStatement = Math.max(1, Math.floor(maxBoundParams / TAG_PARAMS_PER_ROW));
+  const statements: { sql: string; params: unknown[] }[] = [];
+  const quoted = quoteIdentifier(column);
+  for (let start = 0; start < items.length; start += perStatement) {
+    const chunk = items.slice(start, start + perStatement);
+    const cases: string[] = [];
+    const holes: string[] = [];
+    const caseParams: unknown[] = [];
+    const refs: string[] = [];
+    for (const item of chunk) {
+      const value = tagValue(answers.get(item.rowRef), spec, threshold, normalise);
+      if (value === undefined) continue;
+      cases.push('WHEN ? THEN ?');
+      caseParams.push(item.rowRef, value);
+      holes.push('?');
+      refs.push(item.rowRef);
+    }
+    if (refs.length === 0) continue;
+    statements.push({
+      sql:
+        `UPDATE ${relationSql} SET ${quoted} = CASE _rowid_ ${cases.join(' ')} ` +
+        `ELSE ${quoted} END WHERE _rowid_ IN (${holes.join(', ')})`,
+      params: [...caseParams, ...refs],
+    });
+  }
+  return statements;
 }
 
 function collectStored(

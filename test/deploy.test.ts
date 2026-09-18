@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { main, parseArgs } from '../src/cli.ts';
 import { d1Plan, formatCommand, quoteArg, runCommands, tursoPlan } from '../src/deploy.ts';
 import { SCHEMA_SQL } from '../src/schema.ts';
+import { JEV_VERSION } from '../src/types.ts';
 
 const schemaPath = fileURLToPath(new URL('../sql/sql-jev.sql', import.meta.url));
 
@@ -106,7 +107,7 @@ describe('sql-jev CLI', () => {
     expect(
       (db.query("SELECT value FROM jev_settings WHERE key = 'version'").get() as { value: string })
         .value,
-    ).toBe('0.1.0');
+    ).toBe(JEV_VERSION);
     db.close();
   });
 

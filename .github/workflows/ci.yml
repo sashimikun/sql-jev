@@ -31,6 +31,15 @@ jobs:
       - name: Build the package
         run: bun run build
 
+      - name: Benchmark (mock model: catches write-path regressions in seconds)
+        run: bun run bench/bench.ts --rows 1000
+
+      - name: The benchmark is still honest
+        run: |
+          test -f bench/RESULTS.md
+          grep -q 'rewriter scan' bench/RESULTS.md
+          grep -q 'exec() calls' bench/RESULTS.md
+
       - name: The packaged schema applies with the sqlite3 CLI
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq sqlite3
